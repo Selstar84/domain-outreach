@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/follow-ups",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/reset-counters",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/discovery-process",
+      "schedule": "*/10 * * * *"
+    }
+  ]
+}

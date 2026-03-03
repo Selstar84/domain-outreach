@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { generateEmailMessages } from '@/lib/ai/message-generator'
 import { sendViaResend } from '@/lib/email/resend-client'
+import { sendViaBrevo } from '@/lib/email/brevo-client'
 import { sendViaSmtp } from '@/lib/email/smtp-client'
 
 // Runs daily at 9am via Vercel Cron
@@ -91,6 +92,16 @@ export async function GET() {
           fromName: account.display_name,
           fromEmail: account.email_address,
           resendApiKey: account.resend_api_key,
+          messageDbId: message.id,
+        })
+      } else if (account.provider === 'brevo' && account.brevo_api_key) {
+        externalId = await sendViaBrevo({
+          to: prospect.email,
+          subject: best.subject ?? `Follow-up: ${prospect.domain}`,
+          html: emailHtml,
+          fromName: account.display_name,
+          fromEmail: account.email_address,
+          brevoApiKey: account.brevo_api_key,
           messageDbId: message.id,
         })
       } else if (account.provider === 'smtp' && account.smtp_host) {

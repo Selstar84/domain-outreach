@@ -8,7 +8,7 @@ export type ProspectStatus = 'to_contact' | 'contacted' | 'replied' | 'negotiati
 export type DomainType = 'same_word_diff_tld' | 'contains_word' | 'other'
 export type MessageChannel = 'email' | 'linkedin' | 'facebook' | 'instagram' | 'whatsapp' | 'twitter' | 'other'
 export type MessageStatus = 'draft' | 'queued' | 'scheduled' | 'sending' | 'sent' | 'opened' | 'clicked' | 'replied' | 'bounced' | 'failed'
-export type EmailProvider = 'resend' | 'smtp'
+export type EmailProvider = 'resend' | 'brevo' | 'smtp'
 export type EmailSource = 'scraped' | 'hunter' | 'whois' | 'manual'
 export type QueueStatus = 'pending' | 'processing' | 'sent' | 'failed'
 
@@ -32,6 +32,7 @@ export interface EmailAccount {
   display_name: string
   resend_api_key: string | null
   resend_domain: string | null
+  brevo_api_key: string | null
   smtp_host: string | null
   smtp_port: number | null
   smtp_user: string | null

@@ -21,6 +21,7 @@ interface Account {
 const DEFAULTS = {
   provider: 'resend', email_address: '', display_name: '',
   resend_api_key: '', resend_domain: '',
+  brevo_api_key: '',
   smtp_host: '', smtp_port: '587', smtp_user: '', smtp_password_encrypted: '', smtp_secure: false,
   daily_limit: '50', hourly_limit: '10', min_delay_seconds: '120',
 }
@@ -61,6 +62,8 @@ export default function EmailAccountsPage() {
     if (form.provider === 'resend') {
       body.resend_api_key = form.resend_api_key || null
       body.resend_domain = form.resend_domain || null
+    } else if (form.provider === 'brevo') {
+      body.brevo_api_key = form.brevo_api_key || null
     } else {
       body.smtp_host = form.smtp_host || null
       body.smtp_port = parseInt(form.smtp_port)
@@ -119,7 +122,7 @@ export default function EmailAccountsPage() {
       {loading ? <p className="text-gray-400">Chargement...</p> : accounts.length === 0 ? (
         <Card><CardContent className="py-16 text-center">
           <Mail className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-          <p className="text-gray-500">Aucun compte email. Ajoutez un compte Resend ou SMTP.</p>
+          <p className="text-gray-500">Aucun compte email. Ajoutez un compte Resend, Brevo ou SMTP.</p>
           <Button className="mt-4" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-2" />Ajouter</Button>
         </CardContent></Card>
       ) : (
@@ -173,7 +176,8 @@ export default function EmailAccountsPage() {
               <Select value={form.provider} onValueChange={(v) => f('provider', v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="resend">Resend (Recommandé)</SelectItem>
+                  <SelectItem value="resend">Resend</SelectItem>
+                  <SelectItem value="brevo">Brevo (Sendinblue)</SelectItem>
                   <SelectItem value="smtp">SMTP (Gmail, Outlook, etc.)</SelectItem>
                 </SelectContent>
               </Select>
@@ -199,6 +203,14 @@ export default function EmailAccountsPage() {
                 <div className="space-y-2">
                   <Label>Domaine Resend (vérifié)</Label>
                   <Input value={form.resend_domain} onChange={e => f('resend_domain', e.target.value)} placeholder="votre-domaine.com" />
+                </div>
+              </>
+            ) : form.provider === 'brevo' ? (
+              <>
+                <div className="space-y-2">
+                  <Label>Clé API Brevo</Label>
+                  <Input value={form.brevo_api_key} onChange={e => f('brevo_api_key', e.target.value)} placeholder="xkeysib-..." type="password" />
+                  <p className="text-xs text-gray-400">Trouvez votre clé sur brevo.com → SMTP & API → Clés API</p>
                 </div>
               </>
             ) : (

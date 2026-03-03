@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { sendViaResend } from '@/lib/email/resend-client'
+import { sendViaBrevo } from '@/lib/email/brevo-client'
 import { sendViaSmtp } from '@/lib/email/smtp-client'
 import { buildFollowUpSchedule } from '@/lib/email/sequence-scheduler'
 import { z } from 'zod'
@@ -60,6 +61,16 @@ export async function POST(request: Request) {
         fromName: account.display_name,
         fromEmail: account.email_address,
         resendApiKey: account.resend_api_key,
+        messageDbId: message_id,
+      })
+    } else if (account.provider === 'brevo' && account.brevo_api_key) {
+      externalId = await sendViaBrevo({
+        to: prospect.email,
+        subject: message.subject ?? `${prospect.domain} - Domain Inquiry`,
+        html: message.body.replace(/\n/g, '<br>'),
+        fromName: account.display_name,
+        fromEmail: account.email_address,
+        brevoApiKey: account.brevo_api_key,
         messageDbId: message_id,
       })
     } else if (account.provider === 'smtp' && account.smtp_host) {

@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { sendViaResend } from '@/lib/email/resend-client'
+import { sendViaBrevo } from '@/lib/email/brevo-client'
 import { sendViaSmtp } from '@/lib/email/smtp-client'
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -30,6 +31,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         fromName: account.display_name,
         fromEmail: account.email_address,
         resendApiKey: account.resend_api_key,
+        messageDbId: 'test',
+      })
+    } else if (account.provider === 'brevo' && account.brevo_api_key) {
+      await sendViaBrevo({
+        to,
+        subject: '✅ Test email — Domain Outreach',
+        html: '<p>Your Brevo email account is correctly configured in Domain Outreach!</p>',
+        fromName: account.display_name,
+        fromEmail: account.email_address,
+        brevoApiKey: account.brevo_api_key,
         messageDbId: 'test',
       })
     } else if (account.provider === 'smtp' && account.smtp_host) {

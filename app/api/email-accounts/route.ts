@@ -3,11 +3,12 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
 const CreateAccountSchema = z.object({
-  provider: z.enum(['resend', 'smtp']),
+  provider: z.enum(['resend', 'brevo', 'smtp']),
   email_address: z.string().email(),
   display_name: z.string().min(1),
   resend_api_key: z.string().nullable().optional(),
   resend_domain: z.string().nullable().optional(),
+  brevo_api_key: z.string().nullable().optional(),
   smtp_host: z.string().nullable().optional(),
   smtp_port: z.number().int().min(1).max(65535).nullable().optional(),
   smtp_user: z.string().nullable().optional(),

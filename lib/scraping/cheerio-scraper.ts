@@ -10,7 +10,7 @@ export interface ScrapeResult {
   error?: string
 }
 
-const SUBPAGES = ['/contact', '/about', '/about-us', '/team', '/contact-us', '/nous-contacter']
+const SUBPAGES = ['/contact', '/about', '/about-us', '/team', '/contact-us', '/nous-contacter', '/home', '/footer', '/sitemap']
 
 async function fetchHtml(url: string, timeoutMs = 8000): Promise<string | null> {
   const controller = new AbortController()
@@ -79,9 +79,9 @@ export async function scrapeDomain(domain: string): Promise<ScrapeResult> {
     $('meta[property="og:description"]').attr('content') ||
     null
 
-  // Fetch subpages in parallel (limited)
+  // Fetch subpages in parallel (limited to 5)
   const subpageResults = await Promise.allSettled(
-    SUBPAGES.slice(0, 3).map((path) => fetchHtml(`${baseUrl}${path}`))
+    SUBPAGES.slice(0, 5).map((path) => fetchHtml(`${baseUrl}${path}`))
   )
 
   for (const result of subpageResults) {

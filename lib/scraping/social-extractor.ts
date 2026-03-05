@@ -8,18 +8,31 @@ export interface SocialLinks {
 }
 
 const SOCIAL_PATTERNS = {
+  // Facebook: www, m, fb.com, l.facebook (redirect links)
+  facebook: /https?:\/\/(www\.|m\.|l\.|mbasic\.)?facebook\.com\/(?!share|sharer|dialog|plugins|events\/|groups\/|pages\/category|photo|video|watch|reels|login|help)([^"'\s<>?#/]{3,})/gi,
+  // Also catch fb.com short links
+  fb_short: /https?:\/\/(www\.)?fb\.com\/([^"'\s<>?#/]{3,})/gi,
+  // LinkedIn
   linkedin: /https?:\/\/(www\.)?linkedin\.com\/(company|in|profile)\/([^"'\s<>?#]+)/gi,
-  facebook: /https?:\/\/(www\.)?facebook\.com\/([^"'\s<>?#/]{3,})/gi,
-  instagram: /https?:\/\/(www\.)?instagram\.com\/([^"'\s<>?#/]{3,})/gi,
-  twitter: /https?:\/\/(www\.)?(twitter|x)\.com\/([^"'\s<>?#/]{3,})/gi,
+  // Instagram
+  instagram: /https?:\/\/(www\.)?instagram\.com\/(?!p\/|reel\/|explore\/|accounts\/|tv\/)([^"'\s<>?#/]{3,})/gi,
+  // Twitter / X
+  twitter: /https?:\/\/(www\.)?(twitter|x)\.com\/(?!intent|share|home|i\/|hashtag|search)([^"'\s<>?#/]{3,})/gi,
+  // WhatsApp
   whatsapp_link: /https?:\/\/(wa\.me|api\.whatsapp\.com\/send[^"'\s<>]*phone=)([0-9+\s-]{7,20})/gi,
   whatsapp_tel: /(?:whatsapp|wa)[^\d+]*([+]?[0-9]{8,15})/gi,
+  // Phone
   phone: /(?:tel:|phone:|tél:|téléphone:)[^\d+]*([+]?[0-9\s.\-()]{8,20})/gi,
 }
 
-const BLOCKED_FB = ['sharer', 'share', 'dialog', 'plugins', 'events', 'groups', 'pages/category']
+// Known share/widget domains to skip
+const BLOCKED_FB_PATHS = ['sharer', 'share', 'dialog', 'plugins', 'events/', 'groups/', 'pages/category', 'photo', 'video', 'watch', 'reels', 'login', 'help']
 const BLOCKED_LI = ['sharing', 'shareArticle', 'company/linkedin']
-const BLOCKED_TW = ['intent', 'share', 'twitter']
+const BLOCKED_TW = ['intent', 'share', 'twitter', 'home', 'i/']
+
+function cleanUrl(url: string): string {
+  return url.split('?')[0].replace(/\/$/, '').replace(/\/$/, '')
+}
 
 export function extractSocialLinks(html: string): SocialLinks {
   const result: SocialLinks = {
@@ -31,54 +44,57 @@ export function extractSocialLinks(html: string): SocialLinks {
     phone: null,
   }
 
-  // LinkedIn
+  // --- Facebook ---
+  const fbMatches = [...html.matchAll(SOCIAL_PATTERNS.facebook)]
+  for (const m of fbMatches) {
+    const url = m[0]
+    const path = m[2] ?? ''
+    if (!BLOCKED_FB_PATHS.some((b) => url.toLowerCase().includes(b)) && path.length >= 3) {
+      result.facebook_url = cleanUrl(url)
+      break
+    }
+  }
+  // Also try fb.com short links
+  if (!result.facebook_url) {
+    const fbShort = [...html.matchAll(SOCIAL_PATTERNS.fb_short)]
+    if (fbShort.length > 0) {
+      result.facebook_url = cleanUrl(fbShort[0][0])
+    }
+  }
+
+  // --- LinkedIn ---
   const liMatches = [...html.matchAll(SOCIAL_PATTERNS.linkedin)]
   for (const m of liMatches) {
     const url = m[0]
     if (!BLOCKED_LI.some((b) => url.includes(b))) {
-      result.linkedin_url = url.split('?')[0].replace(/\/$/, '')
+      result.linkedin_url = cleanUrl(url)
       break
     }
   }
 
-  // Facebook
-  const fbMatches = [...html.matchAll(SOCIAL_PATTERNS.facebook)]
-  for (const m of fbMatches) {
-    const url = m[0]
-    if (!BLOCKED_FB.some((b) => url.includes(b)) && !url.includes('//www.facebook.com/')) {
-      result.facebook_url = url.split('?')[0].replace(/\/$/, '')
-      break
-    }
-  }
-  // Also catch facebook.com/pagename without www
-  if (!result.facebook_url) {
-    const fbMatches2 = [...html.matchAll(SOCIAL_PATTERNS.facebook)]
-    for (const m of fbMatches2) {
-      const url = m[0]
-      if (!BLOCKED_FB.some((b) => url.includes(b))) {
-        result.facebook_url = url.split('?')[0].replace(/\/$/, '')
-        break
-      }
-    }
-  }
-
-  // Instagram
+  // --- Instagram ---
   const igMatches = [...html.matchAll(SOCIAL_PATTERNS.instagram)]
-  if (igMatches.length > 0) {
-    result.instagram_url = igMatches[0][0].split('?')[0].replace(/\/$/, '')
+  for (const m of igMatches) {
+    const url = m[0]
+    const handle = m[2] ?? ''
+    // Skip generic/blocked handles
+    if (handle.length >= 3 && !['p', 'reel', 'explore', 'accounts', 'tv'].includes(handle)) {
+      result.instagram_url = cleanUrl(url)
+      break
+    }
   }
 
-  // Twitter/X
+  // --- Twitter/X ---
   const twMatches = [...html.matchAll(SOCIAL_PATTERNS.twitter)]
   for (const m of twMatches) {
     const url = m[0]
     if (!BLOCKED_TW.some((b) => url.includes(b))) {
-      result.twitter_url = url.split('?')[0].replace(/\/$/, '')
+      result.twitter_url = cleanUrl(url)
       break
     }
   }
 
-  // WhatsApp
+  // --- WhatsApp ---
   const waLinkMatches = [...html.matchAll(SOCIAL_PATTERNS.whatsapp_link)]
   if (waLinkMatches.length > 0) {
     const number = waLinkMatches[0][2]?.replace(/[^0-9+]/g, '')
@@ -92,7 +108,7 @@ export function extractSocialLinks(html: string): SocialLinks {
     }
   }
 
-  // Phone
+  // --- Phone ---
   const phoneMatches = [...html.matchAll(SOCIAL_PATTERNS.phone)]
   if (phoneMatches.length > 0) {
     result.phone = phoneMatches[0][1]?.trim() ?? null

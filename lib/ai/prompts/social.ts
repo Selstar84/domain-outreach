@@ -16,6 +16,10 @@ export function buildSocialPrompt(ctx: MessageContext, platform: SocialPlatform)
       ? `They own ${ctx.prospectDomain}. The .com version (${ctx.domainForSale}) is available and could complete their brand.`
       : `Their domain contains the same keyword as ${ctx.domainForSale}, which is available.`
 
+  const customBlock = ctx.customInstructions?.trim()
+    ? `\nSPECIAL INSTRUCTIONS FROM THE SENDER (follow these carefully, they override defaults):\n${ctx.customInstructions.trim()}\n`
+    : ''
+
   return `You are a domain name investor reaching out via ${platform.toUpperCase()} to offer a domain for sale.
 
 Domain for sale: ${ctx.domainForSale}
@@ -24,7 +28,7 @@ Company: ${ctx.companyName ?? 'their company'}
 About them: ${ctx.websiteDescription ?? 'not available'}
 
 Context: ${relationHint}
-
+${customBlock}
 Platform guidelines for ${platform.toUpperCase()}:
 ${platformGuidelines[platform]}
 

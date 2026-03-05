@@ -7,6 +7,7 @@ export interface MessageContext {
   companyName?: string | null
   websiteDescription?: string | null
   sequenceStep: 1 | 2 | 3
+  customInstructions?: string | null
 }
 
 export function buildEmailPrompt(ctx: MessageContext): string {
@@ -25,6 +26,10 @@ export function buildEmailPrompt(ctx: MessageContext): string {
     3: `This is the FINAL follow-up (sent 10 days after no response). Very brief (2-3 sentences). Make it easy to say yes or no. This is the last outreach attempt.`,
   }
 
+  const customBlock = ctx.customInstructions?.trim()
+    ? `\nSPECIAL INSTRUCTIONS FROM THE SENDER (follow these carefully, they override defaults):\n${ctx.customInstructions.trim()}\n`
+    : ''
+
   return `You are a domain name broker writing a cold outreach email to sell a domain name.
 
 Domain for sale: ${ctx.domainForSale}
@@ -34,7 +39,7 @@ About their business: ${ctx.websiteDescription ?? 'not available'}
 ${priceHint}
 
 Context: ${relationHint}
-
+${customBlock}
 Instructions:
 - ${stepInstructions[ctx.sequenceStep]}
 - Sound human and natural — NOT like a template

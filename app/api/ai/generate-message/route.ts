@@ -8,6 +8,7 @@ const GenerateSchema = z.object({
   channel: z.enum(['email', 'linkedin', 'facebook', 'instagram', 'whatsapp', 'twitter']),
   sequence_step: z.number().int().min(1).max(3).default(1),
   use_smart_model: z.boolean().default(false),
+  custom_instructions: z.string().max(1000).optional(),
 })
 
 export async function POST(request: Request) {
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
   const parsed = GenerateSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { prospect_id, channel, sequence_step, use_smart_model } = parsed.data
+  const { prospect_id, channel, sequence_step, use_smart_model, custom_instructions } = parsed.data
 
   // Fetch prospect + campaign + settings
   const [{ data: prospect }, { data: settings }] = await Promise.all([
@@ -50,6 +51,7 @@ export async function POST(request: Request) {
     companyName: prospect.company_name,
     websiteDescription: prospect.website_description,
     sequenceStep: sequence_step as 1 | 2 | 3,
+    customInstructions: custom_instructions,
   }
 
   const apiKey = settings?.anthropic_api_key ?? undefined

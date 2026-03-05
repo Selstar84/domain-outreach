@@ -6,8 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
-import { ArrowLeft, ExternalLink, Mail, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Loader2 } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Mail, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Loader2, PlusCircle } from 'lucide-react'
 import Link from 'next/link'
 import type { Prospect } from '@/types/database'
 
@@ -32,6 +35,12 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
   const [filterStatus, setFilterStatus] = useState('all')
   const [selected, setSelected] = useState<Prospect | null>(null)
   const [scrapingIds, setScrapingIds] = useState<Set<string>>(new Set())
+
+  // Manual add dialog state
+  const [addOpen, setAddOpen] = useState(false)
+  const [addSaving, setAddSaving] = useState(false)
+  const [addForm, setAddForm] = useState({ domain: '', company_name: '', email: '', notes: '' })
+
   const supabase = createClient()
 
   const load = useCallback(async () => {
@@ -79,6 +88,50 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
     if (selected?.id === prospectId) setSelected(prev => prev ? { ...prev, status: status as any } : null)
   }
 
+  async function handleAddManual() {
+    const domain = addForm.domain.toLowerCase().trim().replace(/^https?:\/\//, '').replace(/\/$/, '')
+    if (!domain) { toast.error('Domaine requis'); return }
+    if (!domain.includes('.')) { toast.error('Domaine invalide (ex: exemple.fr)'); return }
+
+    setAddSaving(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { toast.error('Non authentifié'); setAddSaving(false); return }
+
+    const parts = domain.split('.')
+    const tld = parts[parts.length - 1]
+
+    const { data, error } = await supabase.from('prospects').insert({
+      campaign_id: campaignId,
+      user_id: user.id,
+      domain,
+      tld,
+      domain_type: 'other',
+      scrape_status: 'pending',
+      status: 'to_contact',
+      priority: 5,
+      company_name: addForm.company_name || null,
+      email: addForm.email || null,
+      notes: addForm.notes || null,
+    }).select().single()
+
+    if (error) {
+      toast.error(error.message.includes('unique') ? 'Ce domaine est déjà dans la campagne' : 'Erreur : ' + error.message)
+      setAddSaving(false)
+      return
+    }
+
+    toast.success(`${domain} ajouté !`)
+    setAddOpen(false)
+    setAddForm({ domain: '', company_name: '', email: '', notes: '' })
+    setAddSaving(false)
+    await load()
+
+    // Auto-trigger scrape
+    if (data?.id) {
+      setTimeout(() => scrapeOne(data as Prospect), 300)
+    }
+  }
+
   const filtered = filterStatus === 'all' ? prospects : prospects.filter(p => p.status === filterStatus)
   const pendingScrape = prospects.filter(p => p.scrape_status === 'pending' || p.scrape_status === 'failed').length
 
@@ -108,6 +161,11 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
             Scraper tout ({pendingScrape} en attente)
           </Button>
         )}
+
+        <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
+          <PlusCircle className="h-4 w-4 mr-1" />
+          Ajouter manuellement
+        </Button>
       </div>
 
       {/* Table */}
@@ -142,7 +200,9 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
                     {p.company_name && <p className="text-xs text-gray-400">{p.company_name}</p>}
                   </td>
                   <td className="px-4 py-3">
-                    <span className="text-xs text-gray-500">{p.domain_type === 'same_word_diff_tld' ? 'Même mot' : 'Contient mot'}</span>
+                    <span className="text-xs text-gray-500">
+                      {p.domain_type === 'same_word_diff_tld' ? 'Même mot' : p.domain_type === 'contains_word' ? 'Contient mot' : 'Manuel'}
+                    </span>
                   </td>
                   <td className="px-4 py-3">
                     {p.email ? (
@@ -185,6 +245,59 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
           </table>
         </div>
       )}
+
+      {/* Manual Add Dialog */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Ajouter un prospect manuellement</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Domaine <span className="text-red-500">*</span></Label>
+              <Input
+                placeholder="exemple.fr ou www.exemple.fr"
+                value={addForm.domain}
+                onChange={e => setAddForm(prev => ({ ...prev, domain: e.target.value }))}
+                onKeyDown={e => e.key === 'Enter' && handleAddManual()}
+              />
+              <p className="text-xs text-gray-400">Le site sera automatiquement scrappé pour trouver email et réseaux sociaux.</p>
+            </div>
+            <div className="space-y-2">
+              <Label>Nom de l'entreprise</Label>
+              <Input
+                placeholder="Karate Club Paris"
+                value={addForm.company_name}
+                onChange={e => setAddForm(prev => ({ ...prev, company_name: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Email (optionnel, si déjà connu)</Label>
+              <Input
+                type="email"
+                placeholder="contact@exemple.fr"
+                value={addForm.email}
+                onChange={e => setAddForm(prev => ({ ...prev, email: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Notes</Label>
+              <Input
+                placeholder="Trouvé via Google, très pertinent..."
+                value={addForm.notes}
+                onChange={e => setAddForm(prev => ({ ...prev, notes: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddOpen(false)} disabled={addSaving}>Annuler</Button>
+            <Button onClick={handleAddManual} disabled={addSaving}>
+              {addSaving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <PlusCircle className="h-4 w-4 mr-1" />}
+              Ajouter et scraper
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Detail Sheet */}
       <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>

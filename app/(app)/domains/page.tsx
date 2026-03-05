@@ -47,6 +47,9 @@ export default function DomainsPage() {
   }
 
   async function handleSave() {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { toast.error('Non authentifié'); return }
+
     const word = extractWord(form.domain)
     const payload = {
       domain: form.domain.toLowerCase().trim(),
@@ -61,7 +64,7 @@ export default function DomainsPage() {
       if (error) { toast.error(error.message); return }
       toast.success('Domaine mis à jour')
     } else {
-      const { error } = await supabase.from('owned_domains').insert(payload)
+      const { error } = await supabase.from('owned_domains').insert({ ...payload, user_id: user.id })
       if (error) { toast.error(error.message); return }
       toast.success('Domaine ajouté')
     }

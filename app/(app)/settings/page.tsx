@@ -43,6 +43,9 @@ export default function SettingsPage() {
 
   async function handleSave() {
     setSaving(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { toast.error('Non authentifié'); setSaving(false); return }
+
     const payload = {
       whoisxml_api_key: form.whoisxml_api_key || null,
       hunter_api_key: form.hunter_api_key || null,
@@ -56,7 +59,7 @@ export default function SettingsPage() {
     if (existing) {
       await supabase.from('settings').update(payload).eq('id', existing.id)
     } else {
-      await supabase.from('settings').insert(payload)
+      await supabase.from('settings').insert({ ...payload, user_id: user.id })
     }
 
     setSaving(false)

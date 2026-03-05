@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { ExternalLink, Copy, CheckCircle, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Bell, Clock } from 'lucide-react'
+import { ExternalLink, Copy, CheckCircle, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Bell, Clock, Ban } from 'lucide-react'
 import type { OutreachMessage } from '@/types/database'
 
 const PLATFORM_ICONS: Record<string, React.ReactNode> = {
@@ -19,6 +19,14 @@ const PLATFORM_ICONS: Record<string, React.ReactNode> = {
   other: <MessageCircle className="h-4 w-4 text-gray-400" />,
 }
 
+const PLATFORM_LABELS: Record<string, string> = {
+  linkedin: 'LinkedIn',
+  facebook: 'Facebook',
+  instagram: 'Instagram',
+  twitter: 'Twitter/X',
+  whatsapp: 'WhatsApp',
+}
+
 function daysSince(dateStr: string): number {
   return Math.floor((Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24))
 }
@@ -26,18 +34,19 @@ function daysSince(dateStr: string): number {
 export default function SocialQueuePage() {
   const [queue, setQueue] = useState<OutreachMessage[]>([])
   const [dueFollowUps, setDueFollowUps] = useState<any[]>([])
-  const [dailyStats, setDailyStats] = useState({ sent: 0, limit: 15 })
+  const [platformStats, setPlatformStats] = useState<Record<string, { sent: number; limit: number }>>({})
   const [loading, setLoading] = useState(true)
   const [markingId, setMarkingId] = useState<string | null>(null)
+  const [unsubscribingId, setUnsubscribingId] = useState<string | null>(null)
   const supabase = createClient()
 
   const load = useCallback(async () => {
     const today = new Date().toISOString().slice(0, 10)
 
-    const [{ data: messages }, { data: daily }, followUpsRes] = await Promise.all([
+    const [{ data: messages }, { data: dailyRows }, followUpsRes] = await Promise.all([
       supabase
         .from('outreach_messages')
-        .select('*, prospect:prospects(domain, company_name, linkedin_url, facebook_url, instagram_url, twitter_url, whatsapp_number, campaign_id)')
+        .select('*, prospect:prospects(id, domain, company_name, linkedin_url, facebook_url, instagram_url, twitter_url, whatsapp_number, campaign_id)')
         .in('channel', ['linkedin', 'facebook', 'instagram', 'whatsapp', 'twitter'])
         .eq('status', 'draft')
         .order('created_at', { ascending: true })
@@ -45,8 +54,7 @@ export default function SocialQueuePage() {
       supabase
         .from('social_queue_daily')
         .select('*')
-        .eq('date', today)
-        .single(),
+        .eq('date', today),
       fetch('/api/outreach/social/due-followups'),
     ])
 
@@ -62,7 +70,16 @@ export default function SocialQueuePage() {
       return true
     })
     setQueue(filtered)
-    setDailyStats({ sent: (daily as any)?.sent_count ?? 0, limit: (daily as any)?.daily_limit ?? 15 })
+
+    // Build per-platform stats map
+    const statsMap: Record<string, { sent: number; limit: number }> = {}
+    for (const row of (dailyRows ?? [])) {
+      statsMap[(row as any).platform] = {
+        sent: (row as any).sent_count ?? 0,
+        limit: (row as any).daily_limit ?? 15,
+      }
+    }
+    setPlatformStats(statsMap)
 
     if (followUpsRes.ok) {
       const followUpsData = await followUpsRes.json()
@@ -74,9 +91,14 @@ export default function SocialQueuePage() {
 
   useEffect(() => { load() }, [load])
 
+  function getPlatformStats(platform: string) {
+    return platformStats[platform] ?? { sent: 0, limit: 15 }
+  }
+
   async function markSent(message: OutreachMessage, platform: string) {
-    if (dailyStats.sent >= dailyStats.limit) {
-      toast.error(`Limite journalière atteinte (${dailyStats.limit} messages)`)
+    const stats = getPlatformStats(platform)
+    if (stats.sent >= stats.limit) {
+      toast.error(`Limite ${PLATFORM_LABELS[platform] ?? platform} atteinte (${stats.limit} messages/jour)`)
       return
     }
     setMarkingId(message.id)
@@ -90,13 +112,19 @@ export default function SocialQueuePage() {
       toast.success('Message marqué comme envoyé !')
       load()
     } else {
-      toast.error('Erreur')
+      const data = await res.json().catch(() => ({}))
+      if (res.status === 429) {
+        toast.error(typeof data.error === 'string' ? data.error : `Limite ${platform} atteinte`)
+      } else {
+        toast.error('Erreur')
+      }
     }
   }
 
   async function markFollowUp(originalMessageId: string, platform: string) {
-    if (dailyStats.sent >= dailyStats.limit) {
-      toast.error(`Limite journalière atteinte (${dailyStats.limit} messages)`)
+    const stats = getPlatformStats(platform)
+    if (stats.sent >= stats.limit) {
+      toast.error(`Limite ${PLATFORM_LABELS[platform] ?? platform} atteinte (${stats.limit} messages/jour)`)
       return
     }
     setMarkingId(originalMessageId)
@@ -115,6 +143,19 @@ export default function SocialQueuePage() {
     }
   }
 
+  async function unsubscribe(prospectId: string, domain: string) {
+    if (!confirm(`Marquer "${domain}" comme "ne plus contacter" ? Tous les messages en attente seront annulés.`)) return
+    setUnsubscribingId(prospectId)
+    const res = await fetch(`/api/prospects/${prospectId}/unsubscribe`, { method: 'POST' })
+    setUnsubscribingId(null)
+    if (res.ok) {
+      toast.success(`${domain} marqué "ne plus contacter"`)
+      load()
+    } else {
+      toast.error('Erreur')
+    }
+  }
+
   function openProfile(message: any, platform: string) {
     const prospect = message.prospect
     const urls: Record<string, string | null> = {
@@ -129,7 +170,12 @@ export default function SocialQueuePage() {
     else toast.error('Profil non disponible')
   }
 
-  const pct = dailyStats.limit > 0 ? Math.min((dailyStats.sent / dailyStats.limit) * 100, 100) : 0
+  // Collect active platforms (those that appear in the queue or have stats)
+  const activePlatforms = Array.from(new Set([
+    ...Object.keys(platformStats),
+    ...queue.map(m => m.channel),
+    ...dueFollowUps.map(m => m.channel),
+  ])).filter(p => ['linkedin', 'facebook', 'instagram', 'twitter', 'whatsapp'].includes(p))
 
   return (
     <div className="p-8 space-y-6">
@@ -138,19 +184,38 @@ export default function SocialQueuePage() {
         <p className="text-gray-500 mt-1">Messages sociaux à envoyer aujourd'hui</p>
       </div>
 
-      {/* Daily Progress */}
-      <Card>
-        <CardContent className="pt-5">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-700">Messages envoyés aujourd'hui</span>
-            <span className="text-sm font-bold text-gray-900">{dailyStats.sent} / {dailyStats.limit}</span>
-          </div>
-          <Progress value={pct} className="h-2" />
-          <p className="text-xs text-gray-400 mt-2">
-            {dailyStats.limit - dailyStats.sent} messages restants aujourd'hui
-          </p>
-        </CardContent>
-      </Card>
+      {/* Per-platform progress bars */}
+      {activePlatforms.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle className="text-sm text-gray-600">Limite par plateforme aujourd'hui</CardTitle></CardHeader>
+          <CardContent className="space-y-3 pt-0">
+            {activePlatforms.map(platform => {
+              const stats = getPlatformStats(platform)
+              const pct = stats.limit > 0 ? Math.min((stats.sent / stats.limit) * 100, 100) : 0
+              const remaining = Math.max(0, stats.limit - stats.sent)
+              return (
+                <div key={platform}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-1.5">
+                      {PLATFORM_ICONS[platform]}
+                      <span className="text-sm font-medium text-gray-700">{PLATFORM_LABELS[platform] ?? platform}</span>
+                    </div>
+                    <span className="text-sm font-bold text-gray-900">
+                      {stats.sent} / {stats.limit}
+                      {remaining === 0 ? (
+                        <span className="ml-1 text-xs text-red-500 font-normal">— Limite atteinte</span>
+                      ) : (
+                        <span className="ml-1 text-xs text-gray-400 font-normal">({remaining} restants)</span>
+                      )}
+                    </span>
+                  </div>
+                  <Progress value={pct} className={`h-1.5 ${pct >= 100 ? '[&>div]:bg-red-500' : pct >= 80 ? '[&>div]:bg-orange-500' : ''}`} />
+                </div>
+              )
+            })}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Due Follow-ups Section */}
       {!loading && dueFollowUps.length > 0 && (
@@ -168,6 +233,8 @@ export default function SocialQueuePage() {
             {dueFollowUps.map((msg) => {
               const prospect = msg.prospect
               const days = msg.sent_at ? daysSince(msg.sent_at) : 0
+              const stats = getPlatformStats(msg.channel)
+              const limitReached = stats.sent >= stats.limit
               return (
                 <Card key={msg.id} className="border-orange-200 bg-orange-50/30">
                   <CardContent className="pt-4 space-y-3">
@@ -201,12 +268,24 @@ export default function SocialQueuePage() {
                       <Button
                         size="sm"
                         onClick={() => markFollowUp(msg.id, msg.channel)}
-                        disabled={markingId === msg.id || dailyStats.sent >= dailyStats.limit}
+                        disabled={markingId === msg.id || limitReached}
                         className="bg-orange-500 hover:bg-orange-600 text-white"
                       >
                         <CheckCircle className="h-3 w-3 mr-1" />
-                        {markingId === msg.id ? 'Enregistrement...' : 'Marquer relancé'}
+                        {markingId === msg.id ? 'Enregistrement...' : limitReached ? `Limite ${msg.channel} atteinte` : 'Marquer relancé'}
                       </Button>
+                      {prospect?.id && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => unsubscribe(prospect.id, prospect.domain)}
+                          disabled={unsubscribingId === prospect.id}
+                          className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                        >
+                          <Ban className="h-3 w-3 mr-1" />
+                          Ne plus contacter
+                        </Button>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -238,8 +317,10 @@ export default function SocialQueuePage() {
         <div className="space-y-4">
           {queue.map((msg) => {
             const prospect = (msg as any).prospect
+            const stats = getPlatformStats(msg.channel)
+            const limitReached = stats.sent >= stats.limit
             return (
-              <Card key={msg.id} className={dailyStats.sent >= dailyStats.limit ? 'opacity-50' : ''}>
+              <Card key={msg.id} className={limitReached ? 'opacity-50' : ''}>
                 <CardContent className="pt-5 space-y-3">
                   {/* Header */}
                   <div className="flex items-center justify-between">
@@ -277,12 +358,24 @@ export default function SocialQueuePage() {
                     <Button
                       size="sm"
                       onClick={() => markSent(msg, msg.channel)}
-                      disabled={markingId === msg.id || dailyStats.sent >= dailyStats.limit}
+                      disabled={markingId === msg.id || limitReached}
                       className="bg-green-600 hover:bg-green-700"
                     >
                       <CheckCircle className="h-3 w-3 mr-1" />
-                      {markingId === msg.id ? 'Envoi...' : 'Marquer comme envoyé'}
+                      {markingId === msg.id ? 'Envoi...' : limitReached ? `Limite ${msg.channel} atteinte` : 'Marquer comme envoyé'}
                     </Button>
+                    {prospect?.id && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => unsubscribe(prospect.id, prospect.domain)}
+                        disabled={unsubscribingId === prospect.id}
+                        className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                      >
+                        <Ban className="h-3 w-3 mr-1" />
+                        Ne plus contacter
+                      </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>

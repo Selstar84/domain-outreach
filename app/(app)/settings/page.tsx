@@ -6,7 +6,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
+import { getEffectiveDailyLimit } from '@/lib/social/limits'
 
 export default function SettingsPage() {
   const [form, setForm] = useState({
@@ -16,6 +18,10 @@ export default function SettingsPage() {
     social_daily_limit: '15',
     email_daily_limit_global: '500',
     check_timeout_ms: '5000',
+    social_warmup_enabled: false,
+    social_warmup_start_date: '',
+    social_warmup_start_count: '5',
+    social_warmup_increment: '2',
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -32,6 +38,10 @@ export default function SettingsPage() {
           social_daily_limit: String(data.social_daily_limit ?? 15),
           email_daily_limit_global: String(data.email_daily_limit_global ?? 500),
           check_timeout_ms: String(data.check_timeout_ms ?? 5000),
+          social_warmup_enabled: data.social_warmup_enabled ?? false,
+          social_warmup_start_date: data.social_warmup_start_date ?? '',
+          social_warmup_start_count: String(data.social_warmup_start_count ?? 5),
+          social_warmup_increment: String(data.social_warmup_increment ?? 2),
         })
       }
       setLoading(false)
@@ -39,7 +49,15 @@ export default function SettingsPage() {
     load()
   }, [])
 
-  function f(key: string, val: string) { setForm(prev => ({ ...prev, [key]: val })) }
+  function f(key: string, val: string | boolean) { setForm(prev => ({ ...prev, [key]: val })) }
+
+  const effectiveLimitToday = getEffectiveDailyLimit({
+    social_daily_limit: parseInt(form.social_daily_limit) || 15,
+    social_warmup_enabled: form.social_warmup_enabled,
+    social_warmup_start_date: form.social_warmup_start_date || null,
+    social_warmup_start_count: parseInt(form.social_warmup_start_count) || 5,
+    social_warmup_increment: parseInt(form.social_warmup_increment) || 2,
+  })
 
   async function handleSave() {
     setSaving(true)
@@ -53,6 +71,10 @@ export default function SettingsPage() {
       social_daily_limit: parseInt(form.social_daily_limit),
       email_daily_limit_global: parseInt(form.email_daily_limit_global),
       check_timeout_ms: parseInt(form.check_timeout_ms),
+      social_warmup_enabled: form.social_warmup_enabled,
+      social_warmup_start_date: form.social_warmup_start_date || null,
+      social_warmup_start_count: parseInt(form.social_warmup_start_count) || 5,
+      social_warmup_increment: parseInt(form.social_warmup_increment) || 2,
     }
 
     const { error } = await supabase
@@ -68,6 +90,10 @@ export default function SettingsPage() {
   }
 
   if (loading) return <div className="p-8 text-gray-400">Chargement...</div>
+
+  const startCount = parseInt(form.social_warmup_start_count) || 5
+  const increment = parseInt(form.social_warmup_increment) || 2
+  const maxLimit = parseInt(form.social_daily_limit) || 15
 
   return (
     <div className="p-8 max-w-2xl space-y-6">
@@ -103,9 +129,9 @@ export default function SettingsPage() {
         <CardHeader><CardTitle className="text-base">Limites globales</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label>Messages sociaux par jour (max)</Label>
+            <Label>Messages sociaux par jour (max par plateforme)</Label>
             <Input type="number" value={form.social_daily_limit} onChange={e => f('social_daily_limit', e.target.value)} min="1" max="100" />
-            <p className="text-xs text-gray-400">Recommandé : 10-20 pour rester discret</p>
+            <p className="text-xs text-gray-400">Recommandé : 10-20 par plateforme pour rester discret</p>
           </div>
           <div className="space-y-2">
             <Label>Emails par jour (global, tous comptes)</Label>
@@ -116,6 +142,88 @@ export default function SettingsPage() {
             <Input type="number" value={form.check_timeout_ms} onChange={e => f('check_timeout_ms', e.target.value)} min="1000" max="30000" />
             <p className="text-xs text-gray-400">Délai max pour vérifier si un site est actif. Défaut : 5000ms</p>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Warm-up Social */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">🔥 Warm-up Social</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <p className="text-sm text-gray-500">
+            Le warm-up permet de démarrer avec un petit nombre de messages par jour et d'augmenter progressivement pour éviter les restrictions de plateforme.
+          </p>
+
+          {/* Toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>Activer le warm-up</Label>
+              <p className="text-xs text-gray-400 mt-0.5">Remplace la limite fixe par une progression graduelle</p>
+            </div>
+            <Switch
+              checked={form.social_warmup_enabled}
+              onCheckedChange={(v) => f('social_warmup_enabled', v)}
+            />
+          </div>
+
+          {form.social_warmup_enabled && (
+            <>
+              {/* Start date */}
+              <div className="space-y-2">
+                <Label>Date de début du warm-up</Label>
+                <Input
+                  type="date"
+                  value={form.social_warmup_start_date}
+                  onChange={e => f('social_warmup_start_date', e.target.value)}
+                />
+                <p className="text-xs text-gray-400">Jour 1 de votre progression</p>
+              </div>
+
+              {/* Start count + increment */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Messages au départ (J1)</Label>
+                  <Input
+                    type="number"
+                    value={form.social_warmup_start_count}
+                    onChange={e => f('social_warmup_start_count', e.target.value)}
+                    min="1"
+                    max="50"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Augmentation par jour</Label>
+                  <Input
+                    type="number"
+                    value={form.social_warmup_increment}
+                    onChange={e => f('social_warmup_increment', e.target.value)}
+                    min="1"
+                    max="10"
+                  />
+                </div>
+              </div>
+
+              {/* Progression preview */}
+              <div className="rounded-lg bg-blue-50 border border-blue-100 p-3 space-y-1.5">
+                <p className="text-xs font-medium text-blue-700">Progression journalière :</p>
+                <p className="text-xs text-blue-600 font-mono">
+                  J1 : {startCount} → J2 : {startCount + increment} → J3 : {startCount + 2 * increment} → ... → plafond : {maxLimit}/jour
+                </p>
+                <div className="border-t border-blue-200 pt-1.5">
+                  <p className="text-xs font-semibold text-blue-700">
+                    Limite active aujourd'hui : <span className="text-lg">{effectiveLimitToday}</span> / {maxLimit} messages par plateforme
+                  </p>
+                </div>
+              </div>
+            </>
+          )}
+
+          {!form.social_warmup_enabled && (
+            <p className="text-xs text-gray-400 italic">
+              Warm-up désactivé — la limite fixe de {maxLimit} messages/plateforme/jour est appliquée.
+            </p>
+          )}
         </CardContent>
       </Card>
 

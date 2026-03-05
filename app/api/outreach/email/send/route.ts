@@ -122,7 +122,20 @@ export async function POST(request: Request) {
 
     // Schedule follow-ups if this is step 1
     if (message.sequence_step === 1) {
-      const followUps = buildFollowUpSchedule(new Date(sentAt))
+      // Load campaign sequence config (if configured, else use defaults)
+      let customSequence: { step: number; delayDays: number }[] | undefined
+      if (message.campaign_id) {
+        const { data: seqSteps } = await supabase
+          .from('follow_up_sequences')
+          .select('step_number, delay_days')
+          .eq('campaign_id', message.campaign_id)
+          .eq('is_active', true)
+          .order('step_number')
+        if (seqSteps && seqSteps.length > 0) {
+          customSequence = seqSteps.map(s => ({ step: s.step_number, delayDays: s.delay_days }))
+        }
+      }
+      const followUps = buildFollowUpSchedule(new Date(sentAt), customSequence)
       const followUpInserts = followUps.map((fu) => ({
         prospect_id: prospect.id,
         campaign_id: message.campaign_id,

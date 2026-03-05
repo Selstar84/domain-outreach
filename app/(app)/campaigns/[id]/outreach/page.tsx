@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { ArrowLeft, Loader2, Copy, Send, ExternalLink, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Sparkles, FileText, SlidersHorizontal } from 'lucide-react'
+import { ArrowLeft, Loader2, Copy, Send, ExternalLink, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Sparkles, FileText, SlidersHorizontal, LayoutGrid, ChevronDown, ChevronUp, Save } from 'lucide-react'
 import Link from 'next/link'
 import type { Prospect, EmailAccount, OutreachMessage } from '@/types/database'
 
@@ -70,13 +70,15 @@ export default function OutreachPage({ params }: { params: Promise<{ id: string 
   const { id: campaignId } = use(params)
   const searchParams = useSearchParams()
   const defaultProspectId = searchParams.get('prospect')
+  const defaultChannel = searchParams.get('channel')
+  const defaultStep = searchParams.get('step')
 
   const [prospects, setProspects] = useState<Prospect[]>([])
   const [emailAccounts, setEmailAccounts] = useState<Pick<EmailAccount, 'id' | 'email_address' | 'display_name' | 'is_active' | 'is_verified' | 'daily_limit' | 'sent_today'>[]>([])
   const [templates, setTemplates] = useState<Template[]>([])
   const [selectedProspectId, setSelectedProspectId] = useState(defaultProspectId ?? '')
-  const [channel, setChannel] = useState('email')
-  const [step, setStep] = useState('1')
+  const [channel, setChannel] = useState(defaultChannel ?? 'email')
+  const [step, setStep] = useState(defaultStep ?? '1')
   const [genMode, setGenMode] = useState<GenerationMode>('ai')
   const [customInstructions, setCustomInstructions] = useState('')
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
@@ -87,6 +89,12 @@ export default function OutreachPage({ params }: { params: Promise<{ id: string 
   const [sending, setSending] = useState(false)
   const [markingPlatform, setMarkingPlatform] = useState('')
   const [campaign, setCampaign] = useState<any>(null)
+  // Sequence config (Feature 6)
+  const [seqOpen, setSeqOpen] = useState(false)
+  const [seqSteps, setSeqSteps] = useState(2)
+  const [seqDelay2, setSeqDelay2] = useState(4)
+  const [seqDelay3, setSeqDelay3] = useState(10)
+  const [seqSaving, setSeqSaving] = useState(false)
   const supabase = createClient()
 
   const selectedProspect = prospects.find(p => p.id === selectedProspectId)
@@ -125,17 +133,26 @@ export default function OutreachPage({ params }: { params: Promise<{ id: string 
   }, [channel])
 
   const load = useCallback(async () => {
-    const [{ data: p }, { data: a }, { data: camp }, { data: tpl }] = await Promise.all([
+    const [{ data: p }, { data: a }, { data: camp }, { data: tpl }, { data: seq }] = await Promise.all([
       supabase.from('prospects').select('*').eq('campaign_id', campaignId).order('priority', { ascending: false }),
       supabase.from('email_accounts').select('id, email_address, display_name, is_active, is_verified, daily_limit, sent_today').eq('is_active', true),
       supabase.from('campaigns').select('*, owned_domain:owned_domains(*)').eq('id', campaignId).single(),
       supabase.from('message_templates').select('id, name, channel, subject, body').order('name'),
+      supabase.from('follow_up_sequences').select('step_number, delay_days').eq('campaign_id', campaignId).eq('is_active', true).order('step_number'),
     ])
     setProspects(p ?? [])
     setEmailAccounts(a ?? [])
     setCampaign(camp)
     setTemplates(tpl ?? [])
     if (a && a.length > 0 && !emailAccountId) setEmailAccountId(a[0].id)
+    // Load sequence config
+    if (seq && seq.length > 0) {
+      setSeqSteps(seq.length + 1) // +1 because seq contains follow-ups only (steps 2, 3)
+      const step2 = seq.find((s: any) => s.step_number === 2)
+      const step3 = seq.find((s: any) => s.step_number === 3)
+      if (step2) setSeqDelay2(step2.delay_days)
+      if (step3) setSeqDelay3(step3.delay_days)
+    }
   }, [campaignId])
 
   useEffect(() => { load() }, [load])
@@ -251,6 +268,21 @@ export default function OutreachPage({ params }: { params: Promise<{ id: string 
     else toast.error(`Pas de profil ${platform} pour ce prospect`)
   }
 
+  async function saveSequence() {
+    setSeqSaving(true)
+    const steps = []
+    if (seqSteps >= 2) steps.push({ step_number: 2, delay_days: seqDelay2 })
+    if (seqSteps >= 3) steps.push({ step_number: 3, delay_days: seqDelay3 })
+    const res = await fetch(`/api/campaigns/${campaignId}/sequence`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ steps }),
+    })
+    setSeqSaving(false)
+    if (res.ok) toast.success('Séquence sauvegardée !')
+    else toast.error('Erreur sauvegarde séquence')
+  }
+
   function handleGenerate() {
     if (genMode === 'template') applyTemplate()
     else generateAI()
@@ -265,13 +297,21 @@ export default function OutreachPage({ params }: { params: Promise<{ id: string 
 
   return (
     <div className="p-8 space-y-6">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Link href={`/campaigns/${campaignId}`}><Button variant="ghost" size="sm"><ArrowLeft className="h-4 w-4 mr-1" />Retour</Button></Link>
         <h1 className="text-xl font-bold text-gray-900">Outreach — Générer & Envoyer</h1>
+        <div className="ml-auto">
+          <Link href={`/campaigns/${campaignId}/platforms`}>
+            <Button variant="outline" size="sm">
+              <LayoutGrid className="h-4 w-4 mr-1" />Vue par plateforme
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left: Config */}
+        {/* Left: Config + Sequence */}
+        <div className="space-y-4">
         <Card>
           <CardHeader><CardTitle className="text-base">Configuration</CardTitle></CardHeader>
           <CardContent className="space-y-4">
@@ -438,6 +478,91 @@ export default function OutreachPage({ params }: { params: Promise<{ id: string 
             </Button>
           </CardContent>
         </Card>
+
+        {/* Sequence Config Card */}
+        <Card>
+          <CardHeader
+            className="cursor-pointer select-none"
+            onClick={() => setSeqOpen(o => !o)}
+          >
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base flex items-center gap-2">
+                🔁 Séquence de suivi
+              </CardTitle>
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                {seqSteps === 1 ? 'Pas de relance' : `${seqSteps - 1} relance${seqSteps > 2 ? 's' : ''}`}
+                {seqOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </div>
+            </div>
+          </CardHeader>
+          {seqOpen && (
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Nombre d'étapes total</Label>
+                <div className="flex gap-2">
+                  {[1, 2, 3].map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setSeqSteps(n)}
+                      className={`flex-1 py-1.5 rounded-lg text-sm font-medium border transition-all ${
+                        seqSteps === n ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      {n === 1 ? '1 — Aucune relance' : n === 2 ? '2 — 1 relance' : '3 — 2 relances'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {seqSteps >= 2 && (
+                <div className="space-y-2">
+                  <Label>Délai relance 1 (après étape 1)</Label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min={1}
+                      max={30}
+                      value={seqDelay2}
+                      onChange={e => setSeqDelay2(parseInt(e.target.value))}
+                      className="flex-1"
+                    />
+                    <span className="text-sm font-medium text-gray-700 w-12 text-right">J+{seqDelay2}</span>
+                  </div>
+                </div>
+              )}
+
+              {seqSteps >= 3 && (
+                <div className="space-y-2">
+                  <Label>Délai relance 2 (après étape 1)</Label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min={seqDelay2 + 1}
+                      max={60}
+                      value={seqDelay3}
+                      onChange={e => setSeqDelay3(parseInt(e.target.value))}
+                      className="flex-1"
+                    />
+                    <span className="text-sm font-medium text-gray-700 w-12 text-right">J+{seqDelay3}</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded-lg bg-gray-50 border p-3 text-xs text-gray-600">
+                <p className="font-medium mb-1">Résumé :</p>
+                <p>• Étape 1 : Message initial</p>
+                {seqSteps >= 2 && <p>• Étape 2 : Relance à J+{seqDelay2}</p>}
+                {seqSteps >= 3 && <p>• Étape 3 : Dernière relance à J+{seqDelay3}</p>}
+              </div>
+
+              <Button className="w-full" onClick={saveSequence} disabled={seqSaving} size="sm">
+                {seqSaving ? <><Loader2 className="h-3 w-3 animate-spin mr-2" />Sauvegarde...</> : <><Save className="h-3 w-3 mr-2" />Sauvegarder la séquence</>}
+              </Button>
+            </CardContent>
+          )}
+        </Card>
+        </div>
 
         {/* Right: Messages */}
         <div className="space-y-4">

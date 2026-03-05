@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
-import { ArrowLeft, ExternalLink, Mail, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Loader2, PlusCircle, Upload, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Mail, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Loader2, PlusCircle, Upload, AlertTriangle, Ban, LayoutGrid } from 'lucide-react'
 import Link from 'next/link'
 import type { Prospect } from '@/types/database'
 
@@ -84,6 +84,7 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
   const [filterStatus, setFilterStatus] = useState('all')
   const [selected, setSelected] = useState<Prospect | null>(null)
   const [scrapingIds, setScrapingIds] = useState<Set<string>>(new Set())
+  const [unsubscribingId, setUnsubscribingId] = useState<string | null>(null)
 
   // ── Manual add dialog ─────────────────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false)
@@ -144,6 +145,20 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
       await new Promise(r => setTimeout(r, 500))
     }
     toast.success('Scraping terminé')
+  }
+
+  async function unsubscribeProspect(prospect: Prospect) {
+    if (!confirm(`Marquer "${prospect.domain}" comme "ne plus contacter" ? Tous les messages en attente seront annulés.`)) return
+    setUnsubscribingId(prospect.id)
+    const res = await fetch(`/api/prospects/${prospect.id}/unsubscribe`, { method: 'POST' })
+    setUnsubscribingId(null)
+    if (res.ok) {
+      toast.success(`${prospect.domain} marqué "ne plus contacter"`)
+      setSelected(null)
+      load()
+    } else {
+      toast.error('Erreur')
+    }
   }
 
   async function updateStatus(prospectId: string, status: string) {
@@ -241,6 +256,11 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
         email: r.email?.trim() || null,
         email_source: r.email?.trim() ? 'manual' : null,
         phone: r.phone?.trim() || null,
+        linkedin_url: r.linkedin_url?.trim() || null,
+        facebook_url: r.facebook_url?.trim() || null,
+        instagram_url: r.instagram_url?.trim() || null,
+        twitter_url: r.twitter_url?.trim() || null,
+        whatsapp_number: r.whatsapp_number?.trim() || null,
         notes: r.notes?.trim() || null,
       }
     })
@@ -262,14 +282,15 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
     if (fileInputRef.current) fileInputRef.current.value = ''
     await load()
 
-    // Auto-scrape up to 5 new prospects
+    // Auto-scrape all new prospects
     if (saved && saved.length > 0) {
-      const toScrape = (saved as Prospect[]).slice(0, 5)
-      toast.info(`Scraping automatique de ${toScrape.length} prospect${toScrape.length > 1 ? 's' : ''}...`)
+      const toScrape = saved as Prospect[]
+      toast.info(`Lancement du scraping de ${toScrape.length} prospect${toScrape.length > 1 ? 's' : ''}...`)
       for (const p of toScrape) {
         await scrapeOne(p)
         await new Promise(r => setTimeout(r, 400))
       }
+      toast.success('Scraping terminé !')
     }
   }
 
@@ -325,9 +346,16 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
 
   return (
     <div className="p-8 space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Link href={`/campaigns/${campaignId}`}><Button variant="ghost" size="sm"><ArrowLeft className="h-4 w-4 mr-1" />Retour</Button></Link>
         <h1 className="text-xl font-bold text-gray-900">Prospects — {prospects.length} trouvés</h1>
+        <div className="ml-auto">
+          <Link href={`/campaigns/${campaignId}/platforms`}>
+            <Button variant="outline" size="sm">
+              <LayoutGrid className="h-4 w-4 mr-1" />Vue par plateforme
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Filters & Actions */}
@@ -535,11 +563,11 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
             <div className="space-y-5 py-2">
               <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm space-y-2">
                 <p className="font-medium text-blue-800">Format CSV attendu :</p>
-                <code className="block bg-white rounded border border-blue-200 p-2 text-xs text-gray-700 font-mono overflow-x-auto">
-                  domain,company_name,first_name,last_name,email,phone,notes<br />
-                  karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,Trouvé sur Google
+                <code className="block bg-white rounded border border-blue-200 p-2 text-xs text-gray-700 font-mono overflow-x-auto whitespace-pre">
+{`domain,company_name,first_name,last_name,email,phone,linkedin_url,facebook_url,instagram_url,twitter_url,whatsapp_number,notes
+karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,linkedin.com/in/jean,facebook.com/karateclub,,@karateclub,,`}
                 </code>
-                <p className="text-blue-700 text-xs">Seule la colonne <strong>domain</strong> est obligatoire. Les autres sont optionnelles.</p>
+                <p className="text-blue-700 text-xs">Seule la colonne <strong>domain</strong> est obligatoire. Les profils sociaux déjà connus ne seront pas re-scrappés.</p>
               </div>
               <div className="space-y-2">
                 <Label>Fichier CSV</Label>
@@ -754,10 +782,21 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
                 </div>
 
                 {/* Outreach link */}
-                <div className="pt-2 border-t">
+                <div className="pt-2 border-t space-y-2">
                   <Link href={`/campaigns/${campaignId}/outreach?prospect=${selected.id}`}>
                     <Button className="w-full">✉️ Générer un message pour ce prospect</Button>
                   </Link>
+                  <Button
+                    variant="outline"
+                    className="w-full border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                    onClick={() => unsubscribeProspect(selected)}
+                    disabled={unsubscribingId === selected.id}
+                  >
+                    {unsubscribingId === selected.id
+                      ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />En cours...</>
+                      : <><Ban className="h-4 w-4 mr-2" />Ne plus contacter</>
+                    }
+                  </Button>
                 </div>
               </div>
             </>

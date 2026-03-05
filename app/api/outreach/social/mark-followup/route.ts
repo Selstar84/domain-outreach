@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import { getEffectiveDailyLimit } from '@/lib/social/limits'
 
 const MarkFollowUpSchema = z.object({
   original_message_id: z.string().uuid(),
@@ -79,24 +80,41 @@ export async function POST(request: Request) {
     .eq('id', original.prospect_id)
     .eq('status', 'to_contact')
 
-  // Increment social daily counter
+  // Increment per-platform daily counter
   const today = new Date().toISOString().slice(0, 10)
-  const { data: existing } = await supabase
+
+  // Load settings + calculate effective limit
+  const { data: settings } = await supabase
+    .from('settings')
+    .select('social_daily_limit, social_warmup_enabled, social_warmup_start_date, social_warmup_start_count, social_warmup_increment')
+    .eq('user_id', user.id)
+    .single()
+
+  const effectiveLimit = getEffectiveDailyLimit({
+    social_daily_limit: settings?.social_daily_limit ?? 15,
+    social_warmup_enabled: settings?.social_warmup_enabled ?? false,
+    social_warmup_start_date: settings?.social_warmup_start_date ?? null,
+    social_warmup_start_count: settings?.social_warmup_start_count ?? 5,
+    social_warmup_increment: settings?.social_warmup_increment ?? 2,
+  })
+
+  const { data: existingDaily } = await supabase
     .from('social_queue_daily')
     .select('*')
     .eq('user_id', user.id)
     .eq('date', today)
+    .eq('platform', platform)
     .single()
 
-  if (existing) {
+  if (existingDaily) {
     await supabase
       .from('social_queue_daily')
-      .update({ sent_count: existing.sent_count + 1 })
-      .eq('id', existing.id)
+      .update({ sent_count: existingDaily.sent_count + 1 })
+      .eq('id', existingDaily.id)
   } else {
     await supabase
       .from('social_queue_daily')
-      .insert({ user_id: user.id, date: today, sent_count: 1 })
+      .insert({ user_id: user.id, date: today, platform, sent_count: 1, daily_limit: effectiveLimit })
   }
 
   return NextResponse.json({ success: true, message: newMessage })

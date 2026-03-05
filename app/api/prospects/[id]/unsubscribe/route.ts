@@ -25,13 +25,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     .eq('user_id', user.id)
 
   // Cancel all pending messages (draft, queued, scheduled)
-  const { count } = await supabase
+  await supabase
     .from('outreach_messages')
     .delete()
     .eq('prospect_id', id)
     .eq('user_id', user.id)
     .in('status', ['draft', 'queued', 'scheduled'])
-    .select('id', { count: 'exact', head: true })
 
-  return NextResponse.json({ success: true, cancelled: count ?? 0 })
+  return NextResponse.json({ success: true })
 }

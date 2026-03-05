@@ -94,7 +94,7 @@ export default function EmailAccountsPage() {
     setTesting(false)
     const data = await res.json()
     if (res.ok) { toast.success('Email de test envoyé !'); setTestOpen(false); load() }
-    else toast.error(data.error ?? 'Erreur envoi test')
+    else toast.error(typeof data.error === 'string' ? data.error : 'Erreur envoi test')
   }
 
   async function toggleActive(id: string, current: boolean) {

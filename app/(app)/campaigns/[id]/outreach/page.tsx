@@ -82,7 +82,7 @@ export default function OutreachPage({ params }: { params: Promise<{ id: string 
 
     const data = await res.json()
     setGenerating(false)
-    if (!res.ok) { toast.error(data.error ?? 'Erreur génération'); return }
+    if (!res.ok) { toast.error(typeof data.error === 'string' ? data.error : 'Erreur génération'); return }
     setMessages(data.messages ?? [])
     if (data.messages?.[0]) setSelectedVariant(data.messages[0])
     toast.success(`${data.messages?.length ?? 0} variantes générées`)
@@ -98,7 +98,7 @@ export default function OutreachPage({ params }: { params: Promise<{ id: string 
     })
     const data = await res.json()
     setSending(false)
-    if (!res.ok) { toast.error(data.error ?? 'Erreur envoi'); return }
+    if (!res.ok) { toast.error(typeof data.error === 'string' ? data.error : 'Erreur envoi'); return }
     toast.success('Email envoyé !')
     setMessages([])
     setSelectedVariant(null)

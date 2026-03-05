@@ -36,7 +36,7 @@ export async function POST(request: Request) {
 
   const body = await request.json()
   const parsed = CreateCampaignSchema.safeParse(body)
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+  if (!parsed.success) return NextResponse.json({ error: 'Données invalides: ' + JSON.stringify(parsed.error.flatten().fieldErrors) }, { status: 400 })
 
   const { data, error } = await supabase
     .from('campaigns')

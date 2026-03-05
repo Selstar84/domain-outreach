@@ -81,7 +81,7 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
     })
     const data = await res.json()
     if (!res.ok) {
-      toast.error(data.error ?? 'Erreur discovery')
+      toast.error(typeof data.error === 'string' ? data.error : 'Erreur discovery')
       setDiscovering(false)
       setJobProgress(null)
     } else {

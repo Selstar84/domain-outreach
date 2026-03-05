@@ -51,7 +51,7 @@ export default function NewCampaignPage() {
         owned_domain_id: form.owned_domain_id,
         name: `Vente de ${selectedDomain?.domain}`,
         asking_price: form.asking_price ? parseFloat(form.asking_price) : null,
-        preferred_email_account_id: form.preferred_email_account_id || null,
+        preferred_email_account_id: (form.preferred_email_account_id && form.preferred_email_account_id !== 'none') ? form.preferred_email_account_id : null,
         email_subject_template: form.email_subject_template || null,
       }),
     })
@@ -59,7 +59,7 @@ export default function NewCampaignPage() {
     const data = await res.json()
     setLoading(false)
 
-    if (!res.ok) { toast.error(data.error ?? 'Erreur'); return }
+    if (!res.ok) { toast.error(typeof data.error === 'string' ? data.error : 'Erreur lors de la création'); return }
     toast.success('Campagne créée !')
     router.push(`/campaigns/${data.id}`)
   }

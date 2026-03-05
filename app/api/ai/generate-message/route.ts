@@ -50,6 +50,7 @@ export async function POST(request: Request) {
     domainType: prospect.domain_type as 'same_word_diff_tld' | 'contains_word',
     companyName: prospect.company_name,
     websiteDescription: prospect.website_description,
+    prospectFirstName: (prospect as any).first_name ?? null,
     sequenceStep: sequence_step as 1 | 2 | 3,
     customInstructions: custom_instructions,
   }

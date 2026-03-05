@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useEffect, useState, useCallback } from 'react'
+import { use, useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -9,8 +9,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
-import { ArrowLeft, ExternalLink, Mail, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Loader2, PlusCircle } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Mail, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Loader2, PlusCircle, Upload, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 import type { Prospect } from '@/types/database'
 
@@ -28,6 +29,54 @@ const SCRAPE_COLORS: Record<string, string> = {
   pending: 'text-gray-400', running: 'text-blue-500', completed: 'text-green-600', failed: 'text-red-500', skipped: 'text-gray-400',
 }
 
+const FIELD_LABELS: Record<string, string> = {
+  email: 'Email', linkedin_url: 'LinkedIn', facebook_url: 'Facebook',
+  instagram_url: 'Instagram', twitter_url: 'Twitter', whatsapp_number: 'WhatsApp',
+}
+
+// ── CSV parser (no external dep) ──────────────────────────────────────────────
+function parseCSV(text: string): Record<string, string>[] {
+  const lines = text.trim().split(/\r?\n/)
+  if (lines.length < 2) return []
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''))
+  return lines.slice(1)
+    .filter(l => l.trim())
+    .map(line => {
+      // Handle quoted fields with commas inside
+      const vals: string[] = []
+      let cur = ''
+      let inQ = false
+      for (const ch of line) {
+        if (ch === '"') { inQ = !inQ }
+        else if (ch === ',' && !inQ) { vals.push(cur.trim()); cur = '' }
+        else { cur += ch }
+      }
+      vals.push(cur.trim())
+      return Object.fromEntries(headers.map((h, i) => [h, vals[i]?.replace(/^['"]|['"]$/g, '') ?? '']))
+    })
+}
+
+// ── Duplicate finder ──────────────────────────────────────────────────────────
+type DupGroup = { field: string; value: string; prospects: Prospect[] }
+
+function findDuplicates(prospects: Prospect[]): DupGroup[] {
+  const groups: DupGroup[] = []
+  const fields = ['email', 'linkedin_url', 'facebook_url', 'instagram_url', 'twitter_url', 'whatsapp_number'] as const
+  for (const field of fields) {
+    const map = new Map<string, Prospect[]>()
+    for (const p of prospects) {
+      const val = (p as any)[field] as string | undefined
+      if (!val) continue
+      if (!map.has(val)) map.set(val, [])
+      map.get(val)!.push(p)
+    }
+    for (const [val, group] of map.entries()) {
+      if (group.length > 1) groups.push({ field, value: val, prospects: group })
+    }
+  }
+  return groups
+}
+
 export default function ProspectsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: campaignId } = use(params)
   const [prospects, setProspects] = useState<Prospect[]>([])
@@ -36,10 +85,24 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
   const [selected, setSelected] = useState<Prospect | null>(null)
   const [scrapingIds, setScrapingIds] = useState<Set<string>>(new Set())
 
-  // Manual add dialog state
+  // ── Manual add dialog ─────────────────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false)
   const [addSaving, setAddSaving] = useState(false)
-  const [addForm, setAddForm] = useState({ domain: '', company_name: '', email: '', notes: '' })
+  const [addForm, setAddForm] = useState({
+    domain: '', company_name: '', first_name: '', last_name: '', email: '', notes: ''
+  })
+
+  // ── CSV import dialog ─────────────────────────────────────────────────────
+  const [csvOpen, setCsvOpen] = useState(false)
+  const [csvStep, setCsvStep] = useState<'upload' | 'preview'>('upload')
+  const [csvRows, setCsvRows] = useState<Record<string, string>[]>([])
+  const [csvImporting, setCsvImporting] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Duplicates dialog ─────────────────────────────────────────────────────
+  const [dupOpen, setDupOpen] = useState(false)
+  const [dupSelected, setDupSelected] = useState<Set<string>>(new Set())
+  const [dupDeleting, setDupDeleting] = useState(false)
 
   const supabase = createClient()
 
@@ -56,6 +119,7 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
 
   useEffect(() => { load() }, [load])
 
+  // ── Scraping ──────────────────────────────────────────────────────────────
   async function scrapeOne(prospect: Prospect) {
     setScrapingIds(prev => new Set(prev).add(prospect.id))
     const res = await fetch(`/api/prospects/${prospect.id}/scrape`, { method: 'POST' })
@@ -77,7 +141,7 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
     toast.info(`Scraping ${toScrape.length} prospects...`)
     for (const p of toScrape) {
       await scrapeOne(p)
-      await new Promise(r => setTimeout(r, 500)) // Small delay
+      await new Promise(r => setTimeout(r, 500))
     }
     toast.success('Scraping terminé')
   }
@@ -88,6 +152,7 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
     if (selected?.id === prospectId) setSelected(prev => prev ? { ...prev, status: status as any } : null)
   }
 
+  // ── Manual add ────────────────────────────────────────────────────────────
   async function handleAddManual() {
     const domain = addForm.domain.toLowerCase().trim().replace(/^https?:\/\//, '').replace(/\/$/, '')
     if (!domain) { toast.error('Domaine requis'); return }
@@ -97,8 +162,7 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { toast.error('Non authentifié'); setAddSaving(false); return }
 
-    const parts = domain.split('.')
-    const tld = parts[parts.length - 1]
+    const tld = domain.split('.').slice(-1)[0]
 
     const { data, error } = await supabase.from('prospects').insert({
       campaign_id: campaignId,
@@ -110,7 +174,10 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
       status: 'to_contact',
       priority: 5,
       company_name: addForm.company_name || null,
+      first_name: addForm.first_name || null,
+      last_name: addForm.last_name || null,
       email: addForm.email || null,
+      email_source: addForm.email ? 'manual' : null,
       notes: addForm.notes || null,
     }).select().single()
 
@@ -122,16 +189,137 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
 
     toast.success(`${domain} ajouté !`)
     setAddOpen(false)
-    setAddForm({ domain: '', company_name: '', email: '', notes: '' })
+    setAddForm({ domain: '', company_name: '', first_name: '', last_name: '', email: '', notes: '' })
     setAddSaving(false)
     await load()
+    if (data?.id) setTimeout(() => scrapeOne(data as Prospect), 300)
+  }
 
-    // Auto-trigger scrape
-    if (data?.id) {
-      setTimeout(() => scrapeOne(data as Prospect), 300)
+  // ── CSV Import ─────────────────────────────────────────────────────────────
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.name.endsWith('.csv')) { toast.error('Fichier CSV requis'); return }
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string
+      const rows = parseCSV(text)
+      if (rows.length === 0) { toast.error('Fichier vide ou mal formaté'); return }
+      if (!rows[0].domain && !rows[0]['domain']) {
+        toast.error('Colonne "domain" manquante dans le CSV')
+        return
+      }
+      setCsvRows(rows)
+      setCsvStep('preview')
+    }
+    reader.readAsText(file)
+  }
+
+  async function handleCsvImport() {
+    setCsvImporting(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { toast.error('Non authentifié'); setCsvImporting(false); return }
+
+    const validRows = csvRows.filter(r => (r.domain ?? '').trim().includes('.'))
+    if (validRows.length === 0) { toast.error('Aucun domaine valide'); setCsvImporting(false); return }
+
+    const inserts = validRows.map(r => {
+      const domain = (r.domain ?? '').toLowerCase().trim().replace(/^https?:\/\//, '').replace(/\/$/, '')
+      const tld = domain.split('.').slice(-1)[0]
+      return {
+        campaign_id: campaignId,
+        user_id: user.id,
+        domain,
+        tld,
+        domain_type: 'other' as const,
+        scrape_status: 'pending' as const,
+        status: 'to_contact' as const,
+        priority: 5,
+        company_name: r.company_name?.trim() || null,
+        first_name: r.first_name?.trim() || null,
+        last_name: r.last_name?.trim() || null,
+        email: r.email?.trim() || null,
+        email_source: r.email?.trim() ? 'manual' : null,
+        phone: r.phone?.trim() || null,
+        notes: r.notes?.trim() || null,
+      }
+    })
+
+    const { data: saved, error } = await supabase
+      .from('prospects')
+      .upsert(inserts, { onConflict: 'campaign_id,domain', ignoreDuplicates: true })
+      .select()
+
+    setCsvImporting(false)
+    if (error) { toast.error('Erreur import : ' + error.message); return }
+
+    const imported = saved?.length ?? 0
+    const skipped = inserts.length - imported
+    toast.success(`${imported} prospect${imported > 1 ? 's' : ''} importé${imported > 1 ? 's' : ''}${skipped > 0 ? ` (${skipped} ignoré${skipped > 1 ? 's' : ''} — déjà présents)` : ''} !`)
+    setCsvOpen(false)
+    setCsvStep('upload')
+    setCsvRows([])
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    await load()
+
+    // Auto-scrape up to 5 new prospects
+    if (saved && saved.length > 0) {
+      const toScrape = (saved as Prospect[]).slice(0, 5)
+      toast.info(`Scraping automatique de ${toScrape.length} prospect${toScrape.length > 1 ? 's' : ''}...`)
+      for (const p of toScrape) {
+        await scrapeOne(p)
+        await new Promise(r => setTimeout(r, 400))
+      }
     }
   }
 
+  function openCsvDialog() {
+    setCsvStep('upload')
+    setCsvRows([])
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    setCsvOpen(true)
+  }
+
+  // ── Duplicates ─────────────────────────────────────────────────────────────
+  const dupGroups = findDuplicates(prospects)
+  const dupCount = new Set(dupGroups.flatMap(g => g.prospects.slice(1).map(p => p.id))).size
+
+  function openDuplicates() {
+    // Pre-select all but the first in each group
+    const preSelected = new Set<string>()
+    for (const g of dupGroups) {
+      g.prospects.slice(1).forEach(p => preSelected.add(p.id))
+    }
+    setDupSelected(preSelected)
+    setDupOpen(true)
+  }
+
+  function toggleDupSelect(id: string) {
+    setDupSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  async function handleDeleteDuplicates() {
+    if (dupSelected.size === 0) return
+    if (!confirm(`Supprimer définitivement ${dupSelected.size} prospect${dupSelected.size > 1 ? 's' : ''} en doublon ?`)) return
+
+    setDupDeleting(true)
+    const ids = [...dupSelected]
+    const { error } = await supabase.from('prospects').delete().in('id', ids)
+    setDupDeleting(false)
+
+    if (error) { toast.error('Erreur suppression : ' + error.message); return }
+
+    toast.success(`${ids.length} doublon${ids.length > 1 ? 's' : ''} supprimé${ids.length > 1 ? 's' : ''}`)
+    setDupOpen(false)
+    setDupSelected(new Set())
+    await load()
+  }
+
+  // ── Rendering ─────────────────────────────────────────────────────────────
   const filtered = filterStatus === 'all' ? prospects : prospects.filter(p => p.status === filterStatus)
   const pendingScrape = prospects.filter(p => p.scrape_status === 'pending' || p.scrape_status === 'failed').length
 
@@ -166,6 +354,18 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
           <PlusCircle className="h-4 w-4 mr-1" />
           Ajouter manuellement
         </Button>
+
+        <Button size="sm" variant="outline" onClick={openCsvDialog}>
+          <Upload className="h-4 w-4 mr-1" />
+          Importer CSV
+        </Button>
+
+        {dupCount > 0 && (
+          <Button size="sm" variant="outline" className="border-red-200 text-red-600 hover:bg-red-50" onClick={openDuplicates}>
+            <AlertTriangle className="h-4 w-4 mr-1" />
+            {dupCount} doublon{dupCount > 1 ? 's' : ''}
+          </Button>
+        )}
       </div>
 
       {/* Table */}
@@ -198,6 +398,11 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
                       </a>
                     </div>
                     {p.company_name && <p className="text-xs text-gray-400">{p.company_name}</p>}
+                    {((p as any).first_name || (p as any).last_name) && (
+                      <p className="text-xs text-gray-500">
+                        👤 {[(p as any).first_name, (p as any).last_name].filter(Boolean).join(' ')}
+                      </p>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <span className="text-xs text-gray-500">
@@ -208,7 +413,7 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
                     {p.email ? (
                       <div>
                         <span className="text-xs font-mono text-gray-700">{p.email}</span>
-                        <span className="ml-1 text-xs text-gray-400">({p.email_confidence}%)</span>
+                        {p.email_confidence && <span className="ml-1 text-xs text-gray-400">({p.email_confidence}%)</span>}
                       </div>
                     ) : <span className="text-xs text-gray-300">—</span>}
                   </td>
@@ -246,7 +451,7 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
         </div>
       )}
 
-      {/* Manual Add Dialog */}
+      {/* ── Manual Add Dialog ─────────────────────────────────────────────── */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -270,6 +475,24 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
                 value={addForm.company_name}
                 onChange={e => setAddForm(prev => ({ ...prev, company_name: e.target.value }))}
               />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Prénom du contact</Label>
+                <Input
+                  placeholder="Jean"
+                  value={addForm.first_name}
+                  onChange={e => setAddForm(prev => ({ ...prev, first_name: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Nom du contact</Label>
+                <Input
+                  placeholder="Dupont"
+                  value={addForm.last_name}
+                  onChange={e => setAddForm(prev => ({ ...prev, last_name: e.target.value }))}
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Email (optionnel, si déjà connu)</Label>
@@ -299,7 +522,163 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
         </DialogContent>
       </Dialog>
 
-      {/* Detail Sheet */}
+      {/* ── CSV Import Dialog ─────────────────────────────────────────────── */}
+      <Dialog open={csvOpen} onOpenChange={(o) => { if (!o) { setCsvOpen(false); setCsvStep('upload'); setCsvRows([]) } }}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>
+              {csvStep === 'upload' ? 'Importer des prospects via CSV' : `Aperçu — ${csvRows.length} ligne${csvRows.length > 1 ? 's' : ''} détectée${csvRows.length > 1 ? 's' : ''}`}
+            </DialogTitle>
+          </DialogHeader>
+
+          {csvStep === 'upload' ? (
+            <div className="space-y-5 py-2">
+              <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm space-y-2">
+                <p className="font-medium text-blue-800">Format CSV attendu :</p>
+                <code className="block bg-white rounded border border-blue-200 p-2 text-xs text-gray-700 font-mono overflow-x-auto">
+                  domain,company_name,first_name,last_name,email,phone,notes<br />
+                  karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,Trouvé sur Google
+                </code>
+                <p className="text-blue-700 text-xs">Seule la colonne <strong>domain</strong> est obligatoire. Les autres sont optionnelles.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Fichier CSV</Label>
+                <Input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFileChange}
+                  className="cursor-pointer"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto min-h-0 py-2">
+              <div className="overflow-x-auto rounded border">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 border-b">
+                    <tr>
+                      {Object.keys(csvRows[0] ?? {}).map(k => (
+                        <th key={k} className="text-left px-3 py-2 font-medium text-gray-600 whitespace-nowrap">{k}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {csvRows.slice(0, 50).map((row, i) => (
+                      <tr key={i} className={!row.domain?.includes('.') ? 'bg-red-50' : 'hover:bg-gray-50'}>
+                        {Object.values(row).map((v, j) => (
+                          <td key={j} className="px-3 py-2 text-gray-700 max-w-[200px] truncate">{v || <span className="text-gray-300">—</span>}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {csvRows.length > 50 && (
+                <p className="text-xs text-gray-400 mt-2 text-center">Affichage limité aux 50 premières lignes — {csvRows.length} lignes au total.</p>
+              )}
+              {csvRows.some(r => !r.domain?.includes('.')) && (
+                <p className="text-xs text-red-500 mt-2">⚠️ Les lignes en rouge ont un domaine invalide et seront ignorées.</p>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="mt-2 flex-shrink-0">
+            {csvStep === 'upload' ? (
+              <Button variant="outline" onClick={() => setCsvOpen(false)}>Annuler</Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => { setCsvStep('upload'); setCsvRows([]); if (fileInputRef.current) fileInputRef.current.value = '' }}>
+                  ← Changer de fichier
+                </Button>
+                <Button onClick={handleCsvImport} disabled={csvImporting}>
+                  {csvImporting
+                    ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Import en cours...</>
+                    : <><Upload className="h-4 w-4 mr-2" />Importer {csvRows.filter(r => r.domain?.includes('.')).length} prospects</>
+                  }
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Duplicates Dialog ─────────────────────────────────────────────── */}
+      <Dialog open={dupOpen} onOpenChange={setDupOpen}>
+        <DialogContent className="sm:max-w-xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-red-500" />
+              Doublons détectés
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-gray-500 -mt-1">
+            Les prospects ci-dessous partagent le même email ou profil social. Cochez ceux à supprimer, gardez ceux qui ont le plus de données.
+          </p>
+          <div className="flex-1 overflow-y-auto min-h-0 space-y-4 py-2">
+            {dupGroups.map((group, gi) => (
+              <div key={gi} className="rounded-lg border border-orange-200 bg-orange-50 overflow-hidden">
+                <div className="px-3 py-2 bg-orange-100 border-b border-orange-200">
+                  <span className="text-xs font-semibold text-orange-800">
+                    {FIELD_LABELS[group.field]} : <span className="font-mono">{group.value.length > 50 ? group.value.substring(0, 50) + '…' : group.value}</span>
+                  </span>
+                  <span className="ml-2 text-xs text-orange-600">({group.prospects.length} prospects)</span>
+                </div>
+                <div className="divide-y divide-orange-100">
+                  {group.prospects.map((p, pi) => {
+                    const isChecked = dupSelected.has(p.id)
+                    return (
+                      <label
+                        key={p.id}
+                        className={`flex items-start gap-3 px-3 py-2.5 cursor-pointer transition-colors ${isChecked ? 'bg-red-50' : 'hover:bg-orange-50'}`}
+                      >
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={() => toggleDupSelect(p.id)}
+                          className="mt-0.5"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm text-gray-900">{p.domain}</span>
+                            {pi === 0 && <Badge variant="outline" className="text-xs text-green-700 border-green-300">À garder</Badge>}
+                            {isChecked && <Badge variant="destructive" className="text-xs">À supprimer</Badge>}
+                          </div>
+                          <div className="text-xs text-gray-500 flex gap-3 mt-0.5 flex-wrap">
+                            {p.company_name && <span>🏢 {p.company_name}</span>}
+                            {(p as any).first_name && <span>👤 {(p as any).first_name} {(p as any).last_name ?? ''}</span>}
+                            {p.email && <span>📧 {p.email}</span>}
+                            <span className={`${STATUS_COLORS[p.status]} px-1.5 rounded-full`}>{STATUS_LABELS[p.status]}</span>
+                          </div>
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          <DialogFooter className="mt-2 flex-shrink-0 flex items-center justify-between w-full">
+            <span className="text-sm text-gray-500">
+              {dupSelected.size} sélectionné{dupSelected.size > 1 ? 's' : ''}
+            </span>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setDupOpen(false)}>Annuler</Button>
+              <Button
+                variant="destructive"
+                onClick={handleDeleteDuplicates}
+                disabled={dupDeleting || dupSelected.size === 0}
+              >
+                {dupDeleting
+                  ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Suppression...</>
+                  : `Supprimer ${dupSelected.size} doublon${dupSelected.size > 1 ? 's' : ''}`
+                }
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Detail Sheet ──────────────────────────────────────────────────── */}
       <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
         <SheetContent className="w-[480px] overflow-y-auto">
           {selected && (
@@ -324,13 +703,15 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
                   </Select>
                 </div>
 
-                {/* Company */}
-                {selected.company_name && (
-                  <InfoRow label="Entreprise" value={selected.company_name} />
+                {/* Company / Contact */}
+                {selected.company_name && <InfoRow label="Entreprise" value={selected.company_name} />}
+                {((selected as any).first_name || (selected as any).last_name) && (
+                  <InfoRow
+                    label="Contact"
+                    value={[(selected as any).first_name, (selected as any).last_name].filter(Boolean).join(' ')}
+                  />
                 )}
-                {selected.website_description && (
-                  <InfoRow label="Description site" value={selected.website_description} />
-                )}
+                {selected.website_description && <InfoRow label="Description site" value={selected.website_description} />}
 
                 {/* Email */}
                 <div className="space-y-2">
@@ -340,7 +721,10 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
                   {selected.email ? (
                     <div className="bg-gray-50 rounded-lg p-3">
                       <p className="font-mono text-sm">{selected.email}</p>
-                      <p className="text-xs text-gray-400 mt-1">Source: {selected.email_source} · Confiance: {selected.email_confidence}%</p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Source: {selected.email_source}
+                        {selected.email_confidence ? ` · Confiance: ${selected.email_confidence}%` : ''}
+                      </p>
                     </div>
                   ) : (
                     <div className="flex gap-2">

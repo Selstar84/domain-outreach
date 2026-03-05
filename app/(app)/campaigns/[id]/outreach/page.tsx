@@ -42,6 +42,8 @@ function substituteVars(text: string, prospect: Prospect, domainForSale: string,
     .replace(/\{\{domaine_vente\}\}/gi, domainForSale)
     .replace(/\{\{domaine_prospect\}\}/gi, prospect.domain)
     .replace(/\{\{entreprise\}\}/gi, prospect.company_name ?? '')
+    .replace(/\{\{prenom\}\}/gi, (prospect as any).first_name ?? '')
+    .replace(/\{\{nom\}\}/gi, (prospect as any).last_name ?? '')
     .replace(/\{\{prix\}\}/gi, askingPrice ? String(askingPrice) : '')
     .replace(/\{\{tld\}\}/gi, prospect.tld)
 }

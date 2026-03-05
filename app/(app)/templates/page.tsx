@@ -27,6 +27,8 @@ const VARIABLES = [
   { key: '{{domaine_vente}}', desc: 'Domaine que vous vendez (ex: mykarate.com)' },
   { key: '{{domaine_prospect}}', desc: "Domaine du prospect (ex: mykarateclub.co.uk)" },
   { key: '{{entreprise}}', desc: "Nom de l'entreprise du prospect" },
+  { key: '{{prenom}}', desc: "Prénom du contact prospect" },
+  { key: '{{nom}}', desc: "Nom de famille du contact prospect" },
   { key: '{{prix}}', desc: 'Prix de vente demandé' },
   { key: '{{tld}}', desc: 'Extension du prospect (.fr, .co.uk…)' },
 ]

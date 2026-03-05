@@ -34,6 +34,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     let emailSource: string | null = bestEmail ? 'scraped' : null
     let emailConfidence = bestEmail?.confidence ?? null
     let ownerName: string | null = null
+    let firstName: string | null = null
+    let lastName: string | null = null
 
     // Enrich with Hunter.io if no email found
     if (!email) {
@@ -51,6 +53,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           emailSource = 'hunter'
           emailConfidence = best.confidence
           if (best.first_name || best.last_name) {
+            firstName = best.first_name ?? null
+            lastName = best.last_name ?? null
             ownerName = [best.first_name, best.last_name].filter(Boolean).join(' ')
           }
         }
@@ -66,6 +70,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       email_source: emailSource,
       email_confidence: emailConfidence,
       owner_name: ownerName,
+      first_name: firstName,
+      last_name: lastName,
       phone: result.social.phone,
       linkedin_url: result.social.linkedin_url,
       facebook_url: result.social.facebook_url,

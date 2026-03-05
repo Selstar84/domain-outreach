@@ -6,6 +6,7 @@ export interface MessageContext {
   domainType: 'same_word_diff_tld' | 'contains_word'
   companyName?: string | null
   websiteDescription?: string | null
+  prospectFirstName?: string | null
   sequenceStep: 1 | 2 | 3
   customInstructions?: string | null
 }
@@ -30,11 +31,16 @@ export function buildEmailPrompt(ctx: MessageContext): string {
     ? `\nSPECIAL INSTRUCTIONS FROM THE SENDER (follow these carefully, they override defaults):\n${ctx.customInstructions.trim()}\n`
     : ''
 
+  const nameHint = ctx.prospectFirstName
+    ? `Recipient first name: ${ctx.prospectFirstName} (use their first name in the greeting if appropriate)`
+    : ''
+
   return `You are a domain name broker writing a cold outreach email to sell a domain name.
 
 Domain for sale: ${ctx.domainForSale}
 Recipient's domain: ${ctx.prospectDomain}
 Company/recipient: ${ctx.companyName ?? 'the company'}
+${nameHint}
 About their business: ${ctx.websiteDescription ?? 'not available'}
 ${priceHint}
 

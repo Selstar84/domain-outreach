@@ -20,11 +20,16 @@ export function buildSocialPrompt(ctx: MessageContext, platform: SocialPlatform)
     ? `\nSPECIAL INSTRUCTIONS FROM THE SENDER (follow these carefully, they override defaults):\n${ctx.customInstructions.trim()}\n`
     : ''
 
+  const nameHint = ctx.prospectFirstName
+    ? `Recipient first name: ${ctx.prospectFirstName} (personalize the greeting with their first name if appropriate)`
+    : ''
+
   return `You are a domain name investor reaching out via ${platform.toUpperCase()} to offer a domain for sale.
 
 Domain for sale: ${ctx.domainForSale}
 Recipient's domain: ${ctx.prospectDomain}
 Company: ${ctx.companyName ?? 'their company'}
+${nameHint}
 About them: ${ctx.websiteDescription ?? 'not available'}
 
 Context: ${relationHint}

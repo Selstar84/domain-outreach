@@ -55,15 +55,16 @@ export default function SettingsPage() {
       check_timeout_ms: parseInt(form.check_timeout_ms),
     }
 
-    const { data: existing } = await supabase.from('settings').select('id').single()
-    if (existing) {
-      await supabase.from('settings').update(payload).eq('id', existing.id)
-    } else {
-      await supabase.from('settings').insert({ ...payload, user_id: user.id })
-    }
+    const { error } = await supabase
+      .from('settings')
+      .upsert({ ...payload, user_id: user.id }, { onConflict: 'user_id' })
 
     setSaving(false)
-    toast.success('Paramètres sauvegardés')
+    if (error) {
+      toast.error('Erreur sauvegarde : ' + error.message)
+      return
+    }
+    toast.success('Paramètres sauvegardés ✓')
   }
 
   if (loading) return <div className="p-8 text-gray-400">Chargement...</div>

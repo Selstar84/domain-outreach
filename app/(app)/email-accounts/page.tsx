@@ -50,6 +50,11 @@ export default function EmailAccountsPage() {
 
   async function handleSave() {
     if (!form.email_address || !form.display_name) { toast.error('Email et nom requis'); return }
+    if (form.provider === 'resend' && !form.resend_api_key) { toast.error('Clé API Resend requise'); return }
+    if (form.provider === 'brevo' && !form.brevo_api_key) { toast.error('Clé API Brevo requise'); return }
+    if (form.provider === 'smtp' && !form.smtp_host) { toast.error('Serveur SMTP requis (ex: smtp.gmail.com)'); return }
+    if (form.provider === 'smtp' && !form.smtp_user) { toast.error('Utilisateur SMTP requis'); return }
+    if (form.provider === 'smtp' && !form.smtp_password_encrypted) { toast.error('Mot de passe SMTP requis'); return }
     setSaving(true)
     const body: Record<string, unknown> = {
       provider: form.provider,

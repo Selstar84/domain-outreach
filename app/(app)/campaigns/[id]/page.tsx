@@ -115,7 +115,10 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
       const res = await fetch(`/api/campaigns/${id}/launch`, { method: 'POST' })
       const data = await res.json()
       if (!res.ok) { toast.error(data.error ?? 'Erreur lancement'); return }
-      toast.success(`${data.queued} emails mis en file d'envoi — ils partiront ce matin à 9h`)
+      const firstDate = data.first_send ? new Date(data.first_send).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '9h'
+      const lastDate = data.last_send ? new Date(data.last_send).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : ''
+      const daysMsg = data.total_days > 1 ? ` sur ${data.total_days} jours (${data.daily_limit}/jour, du ${firstDate} au ${lastDate})` : ` — envoi le ${firstDate} à 9h`
+      toast.success(`🚀 ${data.queued} email${data.queued > 1 ? 's' : ''} planifié${data.queued > 1 ? 's' : ''}${daysMsg}`)
       load()
     } finally {
       setLaunching(false)

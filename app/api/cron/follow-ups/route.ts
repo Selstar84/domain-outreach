@@ -12,7 +12,16 @@ import { personalizeTemplate } from '@/lib/email/template-personalizer'
 // Handles both step 1 (from Launch) and follow-ups (step 2+)
 export async function GET() {
   const supabase = await createServiceClient()
-  const now = new Date().toISOString()
+  const now = new Date()
+  const nowIso = now.toISOString()
+
+  // Midnight UTC today for daily count
+  const todayMidnight = new Date(now)
+  todayMidnight.setUTCHours(0, 0, 0, 0)
+  const todayMidnightIso = todayMidnight.toISOString()
+
+  // 1 hour ago for hourly count
+  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString()
 
   // Find all queued emails that are due
   const { data: dueMessages } = await supabase
@@ -20,15 +29,51 @@ export async function GET() {
     .select('*, prospect:prospects(*), email_account:email_accounts(*)')
     .eq('status', 'queued')
     .eq('channel', 'email')
-    .lte('scheduled_for', now)
-    .limit(50)
+    .lte('scheduled_for', nowIso)
+    .order('scheduled_for', { ascending: true })
 
   if (!dueMessages || dueMessages.length === 0) {
     return NextResponse.json({ processed: 0 })
   }
 
+  // Build per-account rate limit cache (sent today + sent this hour)
+  const accountCache: Record<string, { sentToday: number; sentThisHour: number; lastSentAt: string | null; dailyLimit: number; hourlyLimit: number; minDelaySeconds: number }> = {}
+
+  const uniqueAccountIds = [...new Set(dueMessages.map(m => (m as any).email_account?.id).filter(Boolean))]
+
+  for (const accountId of uniqueAccountIds) {
+    const account = (dueMessages.find(m => (m as any).email_account?.id === accountId) as any)?.email_account
+    if (!account) continue
+
+    // Count actual sends today from DB (source of truth)
+    const { count: sentToday } = await supabase
+      .from('outreach_messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('email_account_id', accountId)
+      .eq('status', 'sent')
+      .gte('sent_at', todayMidnightIso)
+
+    // Count actual sends in last hour
+    const { count: sentThisHour } = await supabase
+      .from('outreach_messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('email_account_id', accountId)
+      .eq('status', 'sent')
+      .gte('sent_at', oneHourAgo)
+
+    accountCache[accountId] = {
+      sentToday: sentToday ?? 0,
+      sentThisHour: sentThisHour ?? 0,
+      lastSentAt: account.last_sent_at ?? null,
+      dailyLimit: account.daily_limit ?? 50,
+      hourlyLimit: account.hourly_limit ?? 10,
+      minDelaySeconds: account.min_delay_seconds ?? 120,
+    }
+  }
+
   let processed = 0
   let skipped = 0
+  let rateLimited = 0
 
   for (const message of dueMessages) {
     const prospect = (message as any).prospect
@@ -46,6 +91,32 @@ export async function GET() {
       skipped++
       continue
     }
+
+    // --- Rate limiting checks ---
+    const limits = accountCache[account.id]
+    if (!limits) { skipped++; continue }
+
+    // Daily limit check
+    if (limits.sentToday >= limits.dailyLimit) {
+      rateLimited++
+      continue // leave as queued, will be picked up tomorrow
+    }
+
+    // Hourly limit check
+    if (limits.sentThisHour >= limits.hourlyLimit) {
+      rateLimited++
+      continue // leave as queued, will be picked up next hour (if on Pro) or tomorrow
+    }
+
+    // Min delay check
+    if (limits.lastSentAt) {
+      const secondsSinceLast = (now.getTime() - new Date(limits.lastSentAt).getTime()) / 1000
+      if (secondsSinceLast < limits.minDelaySeconds) {
+        rateLimited++
+        continue // leave as queued
+      }
+    }
+    // --- End rate limiting ---
 
     try {
       const { data: campaign } = await supabase
@@ -147,11 +218,16 @@ export async function GET() {
           .eq('status', 'to_contact')
       }
 
-      // Update account counters
+      // Update account counters in DB
       await supabase
         .from('email_accounts')
         .update({ sent_today: account.sent_today + 1, sent_this_hour: account.sent_this_hour + 1, last_sent_at: sentAt })
         .eq('id', account.id)
+
+      // Update local cache so next iteration respects the new counts
+      limits.sentToday++
+      limits.sentThisHour++
+      limits.lastSentAt = sentAt
 
       // After sending step 1, schedule follow-ups (step 2, 3)
       if (message.sequence_step === 1) {
@@ -192,5 +268,5 @@ export async function GET() {
     }
   }
 
-  return NextResponse.json({ processed, skipped })
+  return NextResponse.json({ processed, skipped, rate_limited: rateLimited })
 }

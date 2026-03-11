@@ -6,10 +6,25 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
+import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import Link from 'next/link'
-import { ArrowLeft, Search, Users, Mail, BarChart3 } from 'lucide-react'
+import { ArrowLeft, Search, Users, Mail, Rocket, Sparkles, Save } from 'lucide-react'
 import type { Campaign } from '@/types/database'
+
+interface TemplateStep {
+  step: number
+  label: string
+  subject: string
+  body: string
+  delay_days: number
+}
+
+const DEFAULT_TEMPLATES: TemplateStep[] = [
+  { step: 1, label: 'Email initial', subject: '', body: '', delay_days: 0 },
+  { step: 2, label: 'Relance J+4', subject: '', body: '', delay_days: 4 },
+  { step: 3, label: 'Dernière relance J+10', subject: '', body: '', delay_days: 10 },
+]
 
 export default function CampaignPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -17,6 +32,10 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
   const [discovering, setDiscovering] = useState(false)
   const [jobProgress, setJobProgress] = useState<{ checked: number; total: number; active: number } | null>(null)
   const [stats, setStats] = useState({ to_contact: 0, contacted: 0, replied: 0, negotiating: 0, sold: 0, dead: 0, with_email: 0 })
+  const [templates, setTemplates] = useState<TemplateStep[]>(DEFAULT_TEMPLATES)
+  const [generatingTemplates, setGeneratingTemplates] = useState(false)
+  const [savingTemplates, setSavingTemplates] = useState(false)
+  const [launching, setLaunching] = useState(false)
   const supabase = createClient()
 
   async function load() {
@@ -27,7 +46,6 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
       .single()
     setCampaign(data)
 
-    // Load prospect stats
     const { data: prospects } = await supabase
       .from('prospects')
       .select('status, email')
@@ -43,6 +61,64 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
         dead: prospects.filter(p => p.status === 'dead').length,
         with_email: prospects.filter(p => !!p.email).length,
       })
+    }
+
+    // Load saved templates (step 1 is stored separately, follow-ups in follow_up_sequences)
+    const res = await fetch(`/api/campaigns/${id}/sequence`)
+    if (res.ok) {
+      const { steps } = await res.json()
+      if (steps && steps.length > 0) {
+        setTemplates(DEFAULT_TEMPLATES.map(t => {
+          const saved = steps.find((s: any) => s.step_number === t.step)
+          return saved
+            ? { ...t, subject: saved.subject_template ?? '', body: saved.body_template ?? '', delay_days: saved.delay_days }
+            : t
+        }))
+      }
+    }
+  }
+
+  async function generateTemplates() {
+    setGeneratingTemplates(true)
+    try {
+      const res = await fetch(`/api/campaigns/${id}/sequence/generate-templates`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) { toast.error(data.error ?? 'Erreur génération'); return }
+      setTemplates(prev => prev.map(t => {
+        const generated = data.templates.find((g: any) => g.step === t.step)
+        return generated ? { ...t, subject: generated.subject, body: generated.body } : t
+      }))
+      toast.success('Templates générés — modifie-les si nécessaire puis sauvegarde')
+    } finally {
+      setGeneratingTemplates(false)
+    }
+  }
+
+  async function saveTemplates() {
+    setSavingTemplates(true)
+    try {
+      const res = await fetch(`/api/campaigns/${id}/sequence`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templates: templates.map(t => ({ step: t.step, subject: t.subject, body: t.body })) }),
+      })
+      if (!res.ok) { toast.error('Erreur sauvegarde'); return }
+      toast.success('Templates sauvegardés')
+    } finally {
+      setSavingTemplates(false)
+    }
+  }
+
+  async function launchCampaign() {
+    setLaunching(true)
+    try {
+      const res = await fetch(`/api/campaigns/${id}/launch`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) { toast.error(data.error ?? 'Erreur lancement'); return }
+      toast.success(`${data.queued} emails mis en file d'envoi — ils partiront ce matin à 9h`)
+      load()
+    } finally {
+      setLaunching(false)
     }
   }
 
@@ -178,13 +254,86 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
             <CardContent className="pt-6 flex items-center gap-3">
               <Mail className="h-8 w-8 text-green-500" />
               <div>
-                <p className="font-semibold">Outreach</p>
+                <p className="font-semibold">Outreach manuel</p>
                 <p className="text-sm text-gray-500">Générer et envoyer</p>
               </div>
             </CardContent>
           </Card>
         </Link>
       </div>
+
+      {/* Auto-send Templates */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Sparkles className="h-4 w-4" /> Templates d'emails automatiques
+          </CardTitle>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={generateTemplates} disabled={generatingTemplates}>
+              {generatingTemplates ? 'Génération...' : <><Sparkles className="h-3.5 w-3.5 mr-1" />Générer avec l'IA</>}
+            </Button>
+            <Button variant="outline" size="sm" onClick={saveTemplates} disabled={savingTemplates}>
+              {savingTemplates ? 'Sauvegarde...' : <><Save className="h-3.5 w-3.5 mr-1" />Sauvegarder</>}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <p className="text-xs text-gray-500">
+            Variables disponibles : <code className="bg-gray-100 px-1 rounded">{'{prospect_domain}'}</code> <code className="bg-gray-100 px-1 rounded">{'{company_name}'}</code> <code className="bg-gray-100 px-1 rounded">{'{my_domain}'}</code> <code className="bg-gray-100 px-1 rounded">{'{asking_price}'}</code>
+          </p>
+          {templates.map((t) => (
+            <div key={t.step} className="border rounded-lg p-4 space-y-3">
+              <p className="font-medium text-sm text-gray-700">{t.label}</p>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">Sujet</label>
+                <input
+                  className="w-full border rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder={`Sujet pour ${t.label}...`}
+                  value={t.subject}
+                  onChange={e => setTemplates(prev => prev.map(p => p.step === t.step ? { ...p, subject: e.target.value } : p))}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">Corps</label>
+                <Textarea
+                  placeholder={`Contenu de l'email pour ${t.label}...`}
+                  value={t.body}
+                  rows={4}
+                  onChange={e => setTemplates(prev => prev.map(p => p.step === t.step ? { ...p, body: e.target.value } : p))}
+                />
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      {/* Launch Campaign */}
+      <Card className="border-green-200 bg-green-50">
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-semibold text-green-800 flex items-center gap-2">
+                <Rocket className="h-5 w-5" /> Lancer la campagne automatique
+              </p>
+              <p className="text-sm text-green-700 mt-1">
+                {stats.to_contact > 0
+                  ? `${stats.to_contact} prospect${stats.to_contact > 1 ? 's' : ''} avec email prêts à être contactés. Les emails partiront à 9h et les follow-ups seront planifiés automatiquement.`
+                  : 'Aucun prospect à contacter pour le moment.'}
+              </p>
+              {!(campaign as any).preferred_email_account_id && (
+                <p className="text-xs text-orange-600 mt-1">⚠ Configure un compte email dans les paramètres de la campagne d'abord.</p>
+              )}
+            </div>
+            <Button
+              onClick={launchCampaign}
+              disabled={launching || stats.to_contact === 0 || !(campaign as any).preferred_email_account_id}
+              className="bg-green-600 hover:bg-green-700 text-white ml-4 shrink-0"
+            >
+              {launching ? 'Lancement...' : <><Rocket className="h-4 w-4 mr-1.5" />Lancer</>}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }

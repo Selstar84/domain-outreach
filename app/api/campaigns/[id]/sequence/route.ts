@@ -63,14 +63,14 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   return NextResponse.json({ success: true })
 }
 
-// PATCH: save templates only (without touching delay config)
+// PATCH: save templates + delay_days
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id: campaign_id } = await params
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const body = await request.json() as { templates: { step: number; subject: string; body: string }[] }
+  const body = await request.json() as { templates: { step: number; subject: string; body: string; delay_days?: number }[] }
 
   const { data: campaign } = await supabase
     .from('campaigns')
@@ -81,14 +81,24 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
 
-  // Upsert each template
+  const activeSteps = body.templates.map(t => t.step)
+
+  // Delete steps no longer active (e.g. user reduced from 3 to 1 follow-up)
+  await supabase
+    .from('follow_up_sequences')
+    .delete()
+    .eq('campaign_id', campaign_id)
+    .not('step_number', 'in', `(${activeSteps.join(',')})`)
+
+  // Upsert each template with its delay_days
   for (const t of body.templates) {
+    const defaultDelay = t.step === 2 ? 4 : t.step === 3 ? 10 : 14
     await supabase
       .from('follow_up_sequences')
       .upsert({
         campaign_id,
         step_number: t.step,
-        delay_days: t.step === 2 ? 4 : 10,
+        delay_days: t.delay_days ?? defaultDelay,
         subject_template: t.subject,
         body_template: t.body,
         channel: 'email',

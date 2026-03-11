@@ -100,6 +100,11 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
   const [csvImporting, setCsvImporting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // ── Paste URLs dialog ─────────────────────────────────────────────────────
+  const [pasteOpen, setPasteOpen] = useState(false)
+  const [pasteText, setPasteText] = useState('')
+  const [pasteImporting, setPasteImporting] = useState(false)
+
   // ── Duplicates dialog ─────────────────────────────────────────────────────
   const [dupOpen, setDupOpen] = useState(false)
   const [dupSelected, setDupSelected] = useState<Set<string>>(new Set())
@@ -301,6 +306,61 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
     setCsvOpen(true)
   }
 
+  async function handlePasteImport() {
+    const lines = pasteText
+      .split(/[\n,;]+/)
+      .map(l => l.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '').replace(/^www\./, ''))
+      .filter(l => l.length > 0 && l.includes('.'))
+
+    if (lines.length === 0) { toast.error('Aucun domaine valide trouvé'); return }
+
+    setPasteImporting(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { toast.error('Non authentifié'); setPasteImporting(false); return }
+
+    // Deduplicate against existing prospects
+    const existingDomains = new Set(prospects.map(p => p.domain.toLowerCase()))
+    const newDomains = lines.filter(d => !existingDomains.has(d))
+    const skippedCount = lines.length - newDomains.length
+
+    if (newDomains.length === 0) {
+      toast.info('Tous ces domaines sont déjà présents dans la campagne')
+      setPasteImporting(false)
+      return
+    }
+
+    const inserts = newDomains.map(domain => ({
+      campaign_id: campaignId,
+      user_id: user.id,
+      domain,
+      tld: domain.split('.').slice(-1)[0],
+      domain_type: 'other' as const,
+      scrape_status: 'pending' as const,
+      status: 'to_contact' as const,
+      priority: 5,
+    }))
+
+    const { data: saved, error } = await supabase.from('prospects').insert(inserts).select()
+    if (error) { toast.error('Erreur import : ' + error.message); setPasteImporting(false); return }
+
+    const imported = saved?.length ?? 0
+    toast.success(`${imported} prospect${imported > 1 ? 's' : ''} importé${imported > 1 ? 's' : ''}${skippedCount > 0 ? ` (${skippedCount} déjà présent${skippedCount > 1 ? 's' : ''})` : ''} !`)
+    setPasteOpen(false)
+    setPasteText('')
+    await load()
+
+    // Auto-scrape all new prospects
+    if (saved && saved.length > 0) {
+      toast.info(`Lancement du scraping de ${saved.length} prospect${saved.length > 1 ? 's' : ''}...`)
+      for (const p of saved as Prospect[]) {
+        await scrapeOne(p)
+        await new Promise(r => setTimeout(r, 400))
+      }
+      toast.success('Scraping terminé !')
+    }
+    setPasteImporting(false)
+  }
+
   // ── Duplicates ─────────────────────────────────────────────────────────────
   const dupGroups = findDuplicates(prospects)
   const dupCount = new Set(dupGroups.flatMap(g => g.prospects.slice(1).map(p => p.id))).size
@@ -386,6 +446,11 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
         <Button size="sm" variant="outline" onClick={openCsvDialog}>
           <Upload className="h-4 w-4 mr-1" />
           Importer CSV
+        </Button>
+
+        <Button size="sm" variant="outline" onClick={() => { setPasteText(''); setPasteOpen(true) }}>
+          <PlusCircle className="h-4 w-4 mr-1" />
+          Coller des sites
         </Button>
 
         {dupCount > 0 && (
@@ -627,6 +692,38 @@ karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,li
                 </Button>
               </>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Paste URLs Dialog ─────────────────────────────────────────────── */}
+      <Dialog open={pasteOpen} onOpenChange={(o) => { if (!o) { setPasteOpen(false); setPasteText('') } }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Coller une liste de sites</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-gray-500">
+              Colle une liste de domaines ou URLs, un par ligne (ou séparés par des virgules). Les emails seront récupérés automatiquement par scraping.
+            </p>
+            <textarea
+              className="w-full border rounded-lg p-3 text-sm font-mono h-48 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder={"exemple.com\nmonsite.fr\nhttps://www.autresite.io\n..."}
+              value={pasteText}
+              onChange={e => setPasteText(e.target.value)}
+              disabled={pasteImporting}
+            />
+            <p className="text-xs text-gray-400">
+              {pasteText.split(/[\n,;]+/).filter(l => l.trim().includes('.')).length} domaine(s) détecté(s)
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setPasteOpen(false); setPasteText('') }} disabled={pasteImporting}>
+              Annuler
+            </Button>
+            <Button onClick={handlePasteImport} disabled={pasteImporting || !pasteText.trim()}>
+              {pasteImporting ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Import en cours...</> : <>Importer et scraper</>}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

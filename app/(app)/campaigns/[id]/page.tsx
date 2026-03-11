@@ -9,6 +9,7 @@ import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import Link from 'next/link'
+import { Input } from '@/components/ui/input'
 import { ArrowLeft, Search, Users, Mail, Rocket, Sparkles, Save } from 'lucide-react'
 import type { Campaign } from '@/types/database'
 
@@ -33,6 +34,7 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
   const [jobProgress, setJobProgress] = useState<{ checked: number; total: number; active: number } | null>(null)
   const [stats, setStats] = useState({ to_contact: 0, contacted: 0, replied: 0, negotiating: 0, sold: 0, dead: 0, with_email: 0 })
   const [templates, setTemplates] = useState<TemplateStep[]>(DEFAULT_TEMPLATES)
+  const [stepCount, setStepCount] = useState(2)
   const [generatingTemplates, setGeneratingTemplates] = useState(false)
   const [savingTemplates, setSavingTemplates] = useState(false)
   const [launching, setLaunching] = useState(false)
@@ -68,6 +70,8 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
     if (res.ok) {
       const { steps } = await res.json()
       if (steps && steps.length > 0) {
+        const followUpCount = steps.filter((s: any) => s.step_number >= 2).length
+        if (followUpCount > 0) setStepCount(followUpCount)
         setTemplates(DEFAULT_TEMPLATES.map(t => {
           const saved = steps.find((s: any) => s.step_number === t.step)
           return saved
@@ -81,7 +85,11 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
   async function generateTemplates() {
     setGeneratingTemplates(true)
     try {
-      const res = await fetch(`/api/campaigns/${id}/sequence/generate-templates`, { method: 'POST' })
+      const res = await fetch(`/api/campaigns/${id}/sequence/generate-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stepCount: stepCount + 1 }), // +1 to include step 1
+      })
       const data = await res.json()
       if (!res.ok) { toast.error(data.error ?? 'Erreur génération'); return }
       setTemplates(prev => prev.map(t => {
@@ -97,10 +105,18 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
   async function saveTemplates() {
     setSavingTemplates(true)
     try {
+      const activeTemplates = templates.filter(t => t.step === 1 || t.step <= stepCount + 1)
       const res = await fetch(`/api/campaigns/${id}/sequence`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ templates: templates.map(t => ({ step: t.step, subject: t.subject, body: t.body })) }),
+        body: JSON.stringify({
+          templates: activeTemplates.map(t => ({
+            step: t.step,
+            subject: t.subject,
+            body: t.body,
+            delay_days: t.delay_days,
+          })),
+        }),
       })
       if (!res.ok) { toast.error('Erreur sauvegarde'); return }
       toast.success('Templates sauvegardés')
@@ -281,12 +297,47 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
+          {/* Step count selector */}
+          <div className="flex items-center gap-3 pb-2 border-b">
+            <span className="text-sm text-gray-600 font-medium">Nombre de relances :</span>
+            {[1, 2, 3].map(n => (
+              <button
+                key={n}
+                onClick={() => setStepCount(n)}
+                className={`px-3 py-1 rounded-full text-sm font-medium border transition-colors ${
+                  stepCount === n
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'
+                }`}
+              >
+                {n} relance{n > 1 ? 's' : ''}
+              </button>
+            ))}
+            <span className="text-xs text-gray-400 ml-2">{stepCount + 1} emails au total par prospect</span>
+          </div>
+
           <p className="text-xs text-gray-500">
             Variables disponibles : <code className="bg-gray-100 px-1 rounded">{'{prospect_domain}'}</code> <code className="bg-gray-100 px-1 rounded">{'{company_name}'}</code> <code className="bg-gray-100 px-1 rounded">{'{my_domain}'}</code> <code className="bg-gray-100 px-1 rounded">{'{asking_price}'}</code>
           </p>
-          {templates.map((t) => (
+          {templates.filter(t => t.step <= stepCount + 1).map((t) => (
             <div key={t.step} className="border rounded-lg p-4 space-y-3">
-              <p className="font-medium text-sm text-gray-700">{t.label}</p>
+              <div className="flex items-center justify-between">
+                <p className="font-medium text-sm text-gray-700">{t.label}</p>
+                {t.step > 1 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">Après</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={60}
+                      value={t.delay_days}
+                      onChange={e => setTemplates(prev => prev.map(p => p.step === t.step ? { ...p, delay_days: parseInt(e.target.value) || 1 } : p))}
+                      className="w-16 h-7 text-sm text-center px-1"
+                    />
+                    <span className="text-xs text-gray-500">jours</span>
+                  </div>
+                )}
+              </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Sujet</label>
                 <input

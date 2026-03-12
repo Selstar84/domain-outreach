@@ -91,6 +91,9 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
   const [editForm, setEditForm] = useState<Record<string, string>>({})
   const [editSaving, setEditSaving] = useState(false)
 
+  // ── Contact history ────────────────────────────────────────────────────────
+  const [contactHistory, setContactHistory] = useState<any[]>([])
+
   // ── Manual add dialog ─────────────────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false)
   const [addSaving, setAddSaving] = useState(false)
@@ -175,6 +178,15 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
     await supabase.from('prospects').update({ status }).eq('id', prospectId)
     load()
     if (selected?.id === prospectId) setSelected(prev => prev ? { ...prev, status: status as any } : null)
+  }
+
+  async function loadContactHistory(prospectId: string) {
+    const { data } = await supabase
+      .from('outreach_messages')
+      .select('id, channel, status, sequence_step, sent_at, scheduled_for, created_at, subject')
+      .eq('prospect_id', prospectId)
+      .order('created_at', { ascending: true })
+    setContactHistory(data ?? [])
   }
 
   function startEdit(p: Prospect) {
@@ -527,7 +539,7 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
             </thead>
             <tbody className="divide-y">
               {filtered.map((p) => (
-                <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelected(p)}>
+                <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => { setSelected(p); loadContactHistory(p.id) }}>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-gray-900">{p.domain}</span>
@@ -849,7 +861,7 @@ karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,li
       </Dialog>
 
       {/* ── Detail Sheet ──────────────────────────────────────────────────── */}
-      <Sheet open={!!selected} onOpenChange={(o) => { if (!o) { setSelected(null); setEditMode(false) } }}>
+      <Sheet open={!!selected} onOpenChange={(o) => { if (!o) { setSelected(null); setEditMode(false); setContactHistory([]) } }}>
         <SheetContent className="w-[480px] overflow-y-auto">
           {selected && (
             <>
@@ -987,9 +999,60 @@ karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,li
                   </>
                 )}
 
+                {/* Contact history */}
+                {!editMode && (
+                  <div className="space-y-2 pt-2 border-t">
+                    <p className="text-sm font-medium text-gray-700">Historique des contacts</p>
+                    {contactHistory.length === 0 ? (
+                      <p className="text-sm text-gray-400">Aucun contact envoyé.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {contactHistory.map((msg) => {
+                          const channelEmoji: Record<string, string> = {
+                            email: '📧', linkedin: '💼', facebook: '👤',
+                            instagram: '📸', whatsapp: '💬', twitter: '🐦', other: '📨'
+                          }
+                          const statusColor: Record<string, string> = {
+                            sent: 'bg-green-100 text-green-700',
+                            queued: 'bg-blue-100 text-blue-700',
+                            failed: 'bg-red-100 text-red-700',
+                            draft: 'bg-gray-100 text-gray-600',
+                            sending: 'bg-yellow-100 text-yellow-700',
+                            opened: 'bg-purple-100 text-purple-700',
+                            replied: 'bg-teal-100 text-teal-700',
+                            bounced: 'bg-red-100 text-red-700',
+                          }
+                          const statusLabel: Record<string, string> = {
+                            sent: 'Envoyé', queued: 'Planifié', failed: 'Échec',
+                            draft: 'Brouillon', sending: 'En cours', opened: 'Ouvert',
+                            replied: 'Répondu', bounced: 'Bounced',
+                          }
+                          const date = msg.sent_at ?? msg.scheduled_for ?? msg.created_at
+                          return (
+                            <div key={msg.id} className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg text-sm">
+                              <span className="text-base">{channelEmoji[msg.channel] ?? '📨'}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium capitalize text-gray-700">{msg.channel}</span>
+                                  <span className="text-xs text-gray-400">Étape {msg.sequence_step}</span>
+                                </div>
+                                {msg.subject && <p className="text-xs text-gray-500 truncate">{msg.subject}</p>}
+                                <p className="text-xs text-gray-400">{date ? new Date(date).toLocaleDateString('fr-CA', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</p>
+                              </div>
+                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColor[msg.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                                {statusLabel[msg.status] ?? msg.status}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Outreach link */}
                 {!editMode && (
-                  <div className="pt-2 border-t space-y-2">
+                  <div className="space-y-2">
                     <Link href={`/campaigns/${campaignId}/outreach?prospect=${selected.id}`}>
                       <Button className="w-full">✉️ Générer un message pour ce prospect</Button>
                     </Link>

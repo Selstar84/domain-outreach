@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
-import { Plus, Mail, CheckCircle, XCircle, Trash2, TestTube } from 'lucide-react'
+import { Plus, Mail, CheckCircle, XCircle, Trash2, TestTube, Pencil, Save } from 'lucide-react'
 
 interface Account {
   id: string; provider: string; email_address: string; display_name: string
@@ -24,6 +24,7 @@ const DEFAULTS = {
   brevo_api_key: '',
   smtp_host: '', smtp_port: '587', smtp_user: '', smtp_password_encrypted: '', smtp_secure: false,
   daily_limit: '50', hourly_limit: '10', min_delay_seconds: '120',
+  signature: '',
 }
 
 export default function EmailAccountsPage() {
@@ -36,6 +37,10 @@ export default function EmailAccountsPage() {
   const [form, setForm] = useState({ ...DEFAULTS })
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [sigOpen, setSigOpen] = useState(false)
+  const [sigAccountId, setSigAccountId] = useState('')
+  const [sigText, setSigText] = useState('')
+  const [sigSaving, setSigSaving] = useState(false)
   const supabase = createClient()
 
   const load = useCallback(async () => {
@@ -76,6 +81,7 @@ export default function EmailAccountsPage() {
       body.smtp_password_encrypted = form.smtp_password_encrypted || null
       body.smtp_secure = form.smtp_secure
     }
+    body.signature = form.signature || null
     const res = await fetch('/api/email-accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     setSaving(false)
     if (!res.ok) { const d = await res.json(); toast.error(d.error ?? 'Erreur'); return }
@@ -104,6 +110,21 @@ export default function EmailAccountsPage() {
 
   async function toggleActive(id: string, current: boolean) {
     await supabase.from('email_accounts').update({ is_active: !current }).eq('id', id)
+    load()
+  }
+
+  function openSigDialog(a: Account) {
+    setSigAccountId(a.id)
+    setSigText((a as any).signature ?? '')
+    setSigOpen(true)
+  }
+
+  async function saveSignature() {
+    setSigSaving(true)
+    await supabase.from('email_accounts').update({ signature: sigText || null }).eq('id', sigAccountId)
+    setSigSaving(false)
+    toast.success('Signature sauvegardée')
+    setSigOpen(false)
     load()
   }
 
@@ -157,14 +178,20 @@ export default function EmailAccountsPage() {
                   <div><p className="text-xs text-gray-400">Délai min</p><p className="font-bold text-gray-700">{a.min_delay_seconds}s</p></div>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <Button variant="outline" size="sm" onClick={() => handleTest(a.id)}>
                     <TestTube className="h-3 w-3 mr-1" />Tester
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => openSigDialog(a)}>
+                    <Pencil className="h-3 w-3 mr-1" />Signature
                   </Button>
                   <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700 ml-auto" onClick={() => handleDelete(a.id)}>
                     <Trash2 className="h-3 w-3" />
                   </Button>
                 </div>
+                {(a as any).signature && (
+                  <p className="text-xs text-gray-400 italic truncate border-t pt-2">✍️ {(a as any).signature.split('\n')[0]}</p>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -265,8 +292,38 @@ export default function EmailAccountsPage() {
               </div>
             </div>
 
+            <div className="border-t pt-4 space-y-2">
+              <Label>Signature (optionnelle)</Label>
+              <textarea
+                className="w-full border rounded-lg p-2 text-sm h-24 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder={"Cordialement,\nJean Dupont\njean@exemple.com"}
+                value={form.signature}
+                onChange={e => f('signature', e.target.value)}
+              />
+              <p className="text-xs text-gray-400">Ajoutée automatiquement sous chaque email envoyé.</p>
+            </div>
+
             <Button className="w-full" onClick={handleSave} disabled={saving}>
               {saving ? 'Enregistrement...' : 'Ajouter le compte'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Signature Dialog */}
+      <Dialog open={sigOpen} onOpenChange={setSigOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Signature email</DialogTitle></DialogHeader>
+          <div className="space-y-3 mt-2">
+            <p className="text-sm text-gray-500">Ajoutée automatiquement sous chaque email envoyé depuis ce compte.</p>
+            <textarea
+              className="w-full border rounded-lg p-3 text-sm h-36 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder={"Cordialement,\nJean Dupont\njean@exemple.com\n+1 514 000 0000"}
+              value={sigText}
+              onChange={e => setSigText(e.target.value)}
+            />
+            <Button className="w-full" onClick={saveSignature} disabled={sigSaving}>
+              {sigSaving ? 'Sauvegarde...' : <><Save className="h-4 w-4 mr-2" />Sauvegarder la signature</>}
             </Button>
           </div>
         </DialogContent>

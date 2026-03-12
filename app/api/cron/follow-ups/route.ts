@@ -177,7 +177,10 @@ export async function GET() {
       }
 
       // Send email
-      const emailHtml = body.replace(/\n/g, '<br>')
+      const signatureHtml = account.signature
+        ? `<br><br>--<br>${account.signature.replace(/\n/g, '<br>')}`
+        : ''
+      const emailHtml = body.replace(/\n/g, '<br>') + signatureHtml
       let externalId: string | null = null
 
       if (account.provider === 'resend' && account.resend_api_key) {

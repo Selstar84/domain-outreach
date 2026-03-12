@@ -14,6 +14,7 @@ const CreateAccountSchema = z.object({
   smtp_user: z.string().nullable().optional(),
   smtp_password_encrypted: z.string().nullable().optional(),
   smtp_secure: z.boolean().default(false),
+  signature: z.string().nullable().optional(),
   daily_limit: z.number().int().min(1).max(2000).default(50),
   hourly_limit: z.number().int().min(1).max(500).default(10),
   min_delay_seconds: z.number().int().min(0).max(3600).default(120),

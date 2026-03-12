@@ -53,11 +53,16 @@ export async function POST(request: Request) {
   try {
     let externalId: string | null = null
 
+    const signatureHtml = account.signature
+      ? `<br><br>--<br>${account.signature.replace(/\n/g, '<br>')}`
+      : ''
+    const emailHtml = message.body.replace(/\n/g, '<br>') + signatureHtml
+
     if (account.provider === 'resend' && account.resend_api_key) {
       externalId = await sendViaResend({
         to: prospect.email,
         subject: message.subject ?? `${prospect.domain} - Domain Inquiry`,
-        html: message.body.replace(/\n/g, '<br>'),
+        html: emailHtml,
         fromName: account.display_name,
         fromEmail: account.email_address,
         resendApiKey: account.resend_api_key,
@@ -67,7 +72,7 @@ export async function POST(request: Request) {
       externalId = await sendViaBrevo({
         to: prospect.email,
         subject: message.subject ?? `${prospect.domain} - Domain Inquiry`,
-        html: message.body.replace(/\n/g, '<br>'),
+        html: emailHtml,
         fromName: account.display_name,
         fromEmail: account.email_address,
         brevoApiKey: account.brevo_api_key,
@@ -77,7 +82,7 @@ export async function POST(request: Request) {
       externalId = await sendViaSmtp({
         to: prospect.email,
         subject: message.subject ?? `${prospect.domain} - Domain Inquiry`,
-        html: message.body.replace(/\n/g, '<br>'),
+        html: emailHtml,
         fromName: account.display_name,
         fromEmail: account.email_address,
         smtpHost: account.smtp_host,

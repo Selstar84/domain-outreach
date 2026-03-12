@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
-import { ArrowLeft, ExternalLink, Mail, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Loader2, PlusCircle, Upload, AlertTriangle, Ban, LayoutGrid } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Mail, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Loader2, PlusCircle, Upload, AlertTriangle, Ban, LayoutGrid, Pencil, Save, X } from 'lucide-react'
 import Link from 'next/link'
 import type { Prospect } from '@/types/database'
 
@@ -85,6 +85,11 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
   const [selected, setSelected] = useState<Prospect | null>(null)
   const [scrapingIds, setScrapingIds] = useState<Set<string>>(new Set())
   const [unsubscribingId, setUnsubscribingId] = useState<string | null>(null)
+
+  // ── Edit mode ─────────────────────────────────────────────────────────────
+  const [editMode, setEditMode] = useState(false)
+  const [editForm, setEditForm] = useState<Record<string, string>>({})
+  const [editSaving, setEditSaving] = useState(false)
 
   // ── Manual add dialog ─────────────────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false)
@@ -170,6 +175,46 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
     await supabase.from('prospects').update({ status }).eq('id', prospectId)
     load()
     if (selected?.id === prospectId) setSelected(prev => prev ? { ...prev, status: status as any } : null)
+  }
+
+  function startEdit(p: Prospect) {
+    setEditForm({
+      email: p.email ?? '',
+      company_name: p.company_name ?? '',
+      first_name: (p as any).first_name ?? '',
+      last_name: (p as any).last_name ?? '',
+      linkedin_url: p.linkedin_url ?? '',
+      facebook_url: p.facebook_url ?? '',
+      instagram_url: p.instagram_url ?? '',
+      twitter_url: p.twitter_url ?? '',
+      whatsapp_number: p.whatsapp_number ?? '',
+      notes: p.notes ?? '',
+    })
+    setEditMode(true)
+  }
+
+  async function saveEdit() {
+    if (!selected) return
+    setEditSaving(true)
+    const updates: Record<string, string | null> = {}
+    for (const [k, v] of Object.entries(editForm)) {
+      updates[k] = v.trim() || null
+    }
+    if (updates.email && updates.email !== selected.email) {
+      updates.email_source = 'manual'
+    }
+    const { data, error } = await supabase
+      .from('prospects')
+      .update(updates)
+      .eq('id', selected.id)
+      .select()
+      .single()
+    setEditSaving(false)
+    if (error) { toast.error('Erreur : ' + error.message); return }
+    toast.success('Prospect mis à jour')
+    setEditMode(false)
+    setSelected(data as Prospect)
+    load()
   }
 
   // ── Manual add ────────────────────────────────────────────────────────────
@@ -804,7 +849,7 @@ karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,li
       </Dialog>
 
       {/* ── Detail Sheet ──────────────────────────────────────────────────── */}
-      <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
+      <Sheet open={!!selected} onOpenChange={(o) => { if (!o) { setSelected(null); setEditMode(false) } }}>
         <SheetContent className="w-[480px] overflow-y-auto">
           {selected && (
             <>
@@ -814,6 +859,23 @@ karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,li
                   <a href={`https://${selected.domain}`} target="_blank" rel="noopener noreferrer">
                     <ExternalLink className="h-4 w-4 text-gray-400" />
                   </a>
+                  <div className="ml-auto flex gap-2">
+                    {editMode ? (
+                      <>
+                        <Button size="sm" variant="outline" onClick={() => setEditMode(false)} disabled={editSaving}>
+                          <X className="h-3 w-3 mr-1" />Annuler
+                        </Button>
+                        <Button size="sm" onClick={saveEdit} disabled={editSaving}>
+                          {editSaving ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Save className="h-3 w-3 mr-1" />}
+                          Sauvegarder
+                        </Button>
+                      </>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => startEdit(selected)}>
+                        <Pencil className="h-3 w-3 mr-1" />Modifier
+                      </Button>
+                    )}
+                  </div>
                 </SheetTitle>
               </SheetHeader>
               <div className="mt-6 space-y-5">
@@ -828,73 +890,122 @@ karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,li
                   </Select>
                 </div>
 
-                {/* Company / Contact */}
-                {selected.company_name && <InfoRow label="Entreprise" value={selected.company_name} />}
-                {((selected as any).first_name || (selected as any).last_name) && (
-                  <InfoRow
-                    label="Contact"
-                    value={[(selected as any).first_name, (selected as any).last_name].filter(Boolean).join(' ')}
-                  />
-                )}
-                {selected.website_description && <InfoRow label="Description site" value={selected.website_description} />}
-
-                {/* Email */}
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                    <Mail className="h-4 w-4" /> Email
-                  </p>
-                  {selected.email ? (
-                    <div className="bg-gray-50 rounded-lg p-3">
-                      <p className="font-mono text-sm">{selected.email}</p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        Source: {selected.email_source}
-                        {selected.email_confidence ? ` · Confiance: ${selected.email_confidence}%` : ''}
-                      </p>
+                {editMode ? (
+                  /* ── Edit form ── */
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs text-gray-500">Prénom</Label>
+                        <Input value={editForm.first_name} onChange={e => setEditForm(p => ({ ...p, first_name: e.target.value }))} placeholder="Jean" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-gray-500">Nom</Label>
+                        <Input value={editForm.last_name} onChange={e => setEditForm(p => ({ ...p, last_name: e.target.value }))} placeholder="Dupont" />
+                      </div>
                     </div>
-                  ) : (
-                    <div className="flex gap-2">
-                      <p className="text-sm text-gray-400">Aucun email trouvé.</p>
-                      <Button size="sm" variant="outline" onClick={() => scrapeOne(selected)} disabled={scrapingIds.has(selected.id)}>
-                        {scrapingIds.has(selected.id) ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Re-scraper'}
-                      </Button>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-500">Entreprise</Label>
+                      <Input value={editForm.company_name} onChange={e => setEditForm(p => ({ ...p, company_name: e.target.value }))} placeholder="Nom de l'entreprise" />
                     </div>
-                  )}
-                </div>
-
-                {/* Social links */}
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-gray-700">Réseaux sociaux</p>
-                  <div className="space-y-2">
-                    {selected.linkedin_url && <SocialLink icon={<Linkedin className="h-4 w-4 text-blue-600" />} label="LinkedIn" url={selected.linkedin_url} />}
-                    {selected.facebook_url && <SocialLink icon={<Facebook className="h-4 w-4 text-blue-500" />} label="Facebook" url={selected.facebook_url} />}
-                    {selected.instagram_url && <SocialLink icon={<Instagram className="h-4 w-4 text-pink-500" />} label="Instagram" url={selected.instagram_url} />}
-                    {selected.twitter_url && <SocialLink icon={<Twitter className="h-4 w-4 text-sky-500" />} label="Twitter/X" url={selected.twitter_url} />}
-                    {selected.whatsapp_number && (
-                      <SocialLink icon={<MessageCircle className="h-4 w-4 text-green-500" />} label="WhatsApp" url={`https://wa.me/${selected.whatsapp_number.replace(/[^0-9]/g, '')}`} />
-                    )}
-                    {!selected.linkedin_url && !selected.facebook_url && !selected.instagram_url && !selected.twitter_url && !selected.whatsapp_number && (
-                      <p className="text-sm text-gray-400">Aucun réseau trouvé.</p>
-                    )}
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-500 flex items-center gap-1"><Mail className="h-3 w-3" /> Email</Label>
+                      <Input type="email" value={editForm.email} onChange={e => setEditForm(p => ({ ...p, email: e.target.value }))} placeholder="contact@exemple.fr" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-500 flex items-center gap-1"><Linkedin className="h-3 w-3 text-blue-600" /> LinkedIn</Label>
+                      <Input value={editForm.linkedin_url} onChange={e => setEditForm(p => ({ ...p, linkedin_url: e.target.value }))} placeholder="linkedin.com/in/..." />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-500 flex items-center gap-1"><Facebook className="h-3 w-3 text-blue-500" /> Facebook</Label>
+                      <Input value={editForm.facebook_url} onChange={e => setEditForm(p => ({ ...p, facebook_url: e.target.value }))} placeholder="facebook.com/..." />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-500 flex items-center gap-1"><Instagram className="h-3 w-3 text-pink-500" /> Instagram</Label>
+                      <Input value={editForm.instagram_url} onChange={e => setEditForm(p => ({ ...p, instagram_url: e.target.value }))} placeholder="instagram.com/..." />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-500 flex items-center gap-1"><Twitter className="h-3 w-3 text-sky-500" /> Twitter / X</Label>
+                      <Input value={editForm.twitter_url} onChange={e => setEditForm(p => ({ ...p, twitter_url: e.target.value }))} placeholder="x.com/..." />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-500 flex items-center gap-1"><MessageCircle className="h-3 w-3 text-green-500" /> WhatsApp</Label>
+                      <Input value={editForm.whatsapp_number} onChange={e => setEditForm(p => ({ ...p, whatsapp_number: e.target.value }))} placeholder="+33612345678" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-gray-500">Notes</Label>
+                      <Input value={editForm.notes} onChange={e => setEditForm(p => ({ ...p, notes: e.target.value }))} placeholder="Notes..." />
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  /* ── Read-only view ── */
+                  <>
+                    {selected.company_name && <InfoRow label="Entreprise" value={selected.company_name} />}
+                    {((selected as any).first_name || (selected as any).last_name) && (
+                      <InfoRow label="Contact" value={[(selected as any).first_name, (selected as any).last_name].filter(Boolean).join(' ')} />
+                    )}
+                    {selected.website_description && <InfoRow label="Description site" value={selected.website_description} />}
+
+                    {/* Email */}
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                        <Mail className="h-4 w-4" /> Email
+                      </p>
+                      {selected.email ? (
+                        <div className="bg-gray-50 rounded-lg p-3">
+                          <p className="font-mono text-sm">{selected.email}</p>
+                          <p className="text-xs text-gray-400 mt-1">
+                            Source: {selected.email_source}
+                            {selected.email_confidence ? ` · Confiance: ${selected.email_confidence}%` : ''}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="flex gap-2 items-center">
+                          <p className="text-sm text-gray-400">Aucun email trouvé.</p>
+                          <Button size="sm" variant="outline" onClick={() => scrapeOne(selected)} disabled={scrapingIds.has(selected.id)}>
+                            {scrapingIds.has(selected.id) ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Re-scraper'}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Social links */}
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-gray-700">Réseaux sociaux</p>
+                      <div className="space-y-2">
+                        {selected.linkedin_url && <SocialLink icon={<Linkedin className="h-4 w-4 text-blue-600" />} label="LinkedIn" url={selected.linkedin_url} />}
+                        {selected.facebook_url && <SocialLink icon={<Facebook className="h-4 w-4 text-blue-500" />} label="Facebook" url={selected.facebook_url} />}
+                        {selected.instagram_url && <SocialLink icon={<Instagram className="h-4 w-4 text-pink-500" />} label="Instagram" url={selected.instagram_url} />}
+                        {selected.twitter_url && <SocialLink icon={<Twitter className="h-4 w-4 text-sky-500" />} label="Twitter/X" url={selected.twitter_url} />}
+                        {selected.whatsapp_number && (
+                          <SocialLink icon={<MessageCircle className="h-4 w-4 text-green-500" />} label="WhatsApp" url={`https://wa.me/${selected.whatsapp_number.replace(/[^0-9]/g, '')}`} />
+                        )}
+                        {!selected.linkedin_url && !selected.facebook_url && !selected.instagram_url && !selected.twitter_url && !selected.whatsapp_number && (
+                          <p className="text-sm text-gray-400">Aucun réseau trouvé.</p>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
 
                 {/* Outreach link */}
-                <div className="pt-2 border-t space-y-2">
-                  <Link href={`/campaigns/${campaignId}/outreach?prospect=${selected.id}`}>
-                    <Button className="w-full">✉️ Générer un message pour ce prospect</Button>
-                  </Link>
-                  <Button
-                    variant="outline"
-                    className="w-full border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
-                    onClick={() => unsubscribeProspect(selected)}
-                    disabled={unsubscribingId === selected.id}
-                  >
-                    {unsubscribingId === selected.id
-                      ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />En cours...</>
-                      : <><Ban className="h-4 w-4 mr-2" />Ne plus contacter</>
-                    }
-                  </Button>
-                </div>
+                {!editMode && (
+                  <div className="pt-2 border-t space-y-2">
+                    <Link href={`/campaigns/${campaignId}/outreach?prospect=${selected.id}`}>
+                      <Button className="w-full">✉️ Générer un message pour ce prospect</Button>
+                    </Link>
+                    <Button
+                      variant="outline"
+                      className="w-full border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                      onClick={() => unsubscribeProspect(selected)}
+                      disabled={unsubscribingId === selected.id}
+                    >
+                      {unsubscribingId === selected.id
+                        ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />En cours...</>
+                        : <><Ban className="h-4 w-4 mr-2" />Ne plus contacter</>
+                      }
+                    </Button>
+                  </div>
+                )}
               </div>
             </>
           )}

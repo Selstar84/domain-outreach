@@ -18,9 +18,9 @@ const SOCIAL_PATTERNS = {
   instagram: /https?:\/\/(www\.)?instagram\.com\/(?!p\/|reel\/|explore\/|accounts\/|tv\/)([^"'\s<>?#/]{3,})/gi,
   // Twitter / X
   twitter: /https?:\/\/(www\.)?(twitter|x)\.com\/(?!intent|share|home|i\/|hashtag|search)([^"'\s<>?#/]{3,})/gi,
-  // WhatsApp
-  whatsapp_link: /https?:\/\/(wa\.me|api\.whatsapp\.com\/send[^"'\s<>]*phone=)([0-9+\s-]{7,20})/gi,
-  whatsapp_tel: /(?:whatsapp|wa)[^\d+]*([+]?[0-9]{8,15})/gi,
+  // WhatsApp — only wa.me/ links are reliable (avoids false positives from phone numbers near "WhatsApp" text)
+  whatsapp_link: /https?:\/\/wa\.me\/([0-9]{7,15})/gi,
+  whatsapp_api: /https?:\/\/api\.whatsapp\.com\/send\?[^"'\s<>]*phone=([0-9]{7,15})/gi,
   // Phone
   phone: /(?:tel:|phone:|tél:|téléphone:)[^\d+]*([+]?[0-9\s.\-()]{8,20})/gi,
 }
@@ -94,17 +94,22 @@ export function extractSocialLinks(html: string): SocialLinks {
     }
   }
 
-  // --- WhatsApp ---
+  // --- WhatsApp (wa.me links only — no text-based phone detection) ---
   const waLinkMatches = [...html.matchAll(SOCIAL_PATTERNS.whatsapp_link)]
   if (waLinkMatches.length > 0) {
-    const number = waLinkMatches[0][2]?.replace(/[^0-9+]/g, '')
-    if (number && number.length >= 8) result.whatsapp_number = number
+    const number = waLinkMatches[0][1]?.replace(/[^0-9]/g, '')
+    // E.164 valid: 7–15 digits total
+    if (number && number.length >= 7 && number.length <= 15) {
+      result.whatsapp_number = '+' + number
+    }
   }
   if (!result.whatsapp_number) {
-    const waTelMatches = [...html.matchAll(SOCIAL_PATTERNS.whatsapp_tel)]
-    if (waTelMatches.length > 0) {
-      const number = waTelMatches[0][1]?.replace(/[^0-9+]/g, '')
-      if (number && number.length >= 8) result.whatsapp_number = number
+    const waApiMatches = [...html.matchAll(SOCIAL_PATTERNS.whatsapp_api)]
+    if (waApiMatches.length > 0) {
+      const number = waApiMatches[0][1]?.replace(/[^0-9]/g, '')
+      if (number && number.length >= 7 && number.length <= 15) {
+        result.whatsapp_number = '+' + number
+      }
     }
   }
 

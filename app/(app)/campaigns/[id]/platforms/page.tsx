@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { toast } from 'sonner'
-import { ArrowLeft, ExternalLink, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Clock, ChevronRight, Ban } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Linkedin, Facebook, Instagram, Twitter, MessageCircle, Clock, ChevronRight, Ban, X, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 
 type Platform = 'linkedin' | 'facebook' | 'instagram' | 'twitter' | 'whatsapp'
@@ -39,6 +39,8 @@ export default function PlatformsPage({ params }: { params: Promise<{ id: string
   const [dailyStat, setDailyStat] = useState<{ sent: number; limit: number } | null>(null)
   const [loading, setLoading] = useState(true)
   const [unsubscribingId, setUnsubscribingId] = useState<string | null>(null)
+  const [clearingId, setClearingId] = useState<string | null>(null)
+  const [scrapingId, setScrapingId] = useState<string | null>(null)
   const supabase = createClient()
 
   const platformConfig = PLATFORMS.find(p => p.value === activePlatform)!
@@ -114,6 +116,27 @@ export default function PlatformsPage({ params }: { params: Promise<{ id: string
     } else {
       toast.error('Erreur')
     }
+  }
+
+  async function scrapeProspect(prospect: any) {
+    setScrapingId(prospect.id)
+    const res = await fetch(`/api/prospects/${prospect.id}/scrape`, { method: 'POST' })
+    setScrapingId(null)
+    if (res.ok) {
+      toast.success(`${prospect.domain} re-scrappé`)
+      load()
+    } else {
+      toast.error('Erreur scraping')
+    }
+  }
+
+  async function clearPlatformField(prospect: any) {
+    if (!confirm(`Supprimer le compte ${platformConfig.label} de "${prospect.domain}" ?`)) return
+    setClearingId(prospect.id)
+    await supabase.from('prospects').update({ [platformConfig.urlField]: null }).eq('id', prospect.id)
+    setClearingId(null)
+    toast.success(`Compte ${platformConfig.label} supprimé`)
+    load()
   }
 
   const { toContact, followUpDue, contacted } = categorized
@@ -246,9 +269,30 @@ export default function PlatformsPage({ params }: { params: Promise<{ id: string
                         <Button
                           size="sm"
                           variant="ghost"
+                          className="text-gray-300 hover:text-blue-500 hover:bg-blue-50"
+                          onClick={() => scrapeProspect(p)}
+                          disabled={scrapingId === p.id}
+                          title="Re-scraper ce prospect"
+                        >
+                          <RefreshCw className={`h-3 w-3 ${scrapingId === p.id ? 'animate-spin' : ''}`} />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-gray-300 hover:text-red-500 hover:bg-red-50"
+                          onClick={() => clearPlatformField(p)}
+                          disabled={clearingId === p.id}
+                          title={`Supprimer le compte ${platformConfig.label}`}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
                           className="text-red-400 hover:text-red-600 hover:bg-red-50"
                           onClick={() => unsubscribeProspect(p)}
                           disabled={unsubscribingId === p.id}
+                          title="Ne plus contacter"
                         >
                           <Ban className="h-3 w-3" />
                         </Button>
@@ -306,9 +350,30 @@ export default function PlatformsPage({ params }: { params: Promise<{ id: string
                         <Button
                           size="sm"
                           variant="ghost"
+                          className="text-gray-300 hover:text-blue-500 hover:bg-blue-50"
+                          onClick={() => scrapeProspect(p)}
+                          disabled={scrapingId === p.id}
+                          title="Re-scraper ce prospect"
+                        >
+                          <RefreshCw className={`h-3 w-3 ${scrapingId === p.id ? 'animate-spin' : ''}`} />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-gray-300 hover:text-red-500 hover:bg-red-50"
+                          onClick={() => clearPlatformField(p)}
+                          disabled={clearingId === p.id}
+                          title={`Supprimer le compte ${platformConfig.label}`}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
                           className="text-red-400 hover:text-red-600 hover:bg-red-50"
                           onClick={() => unsubscribeProspect(p)}
                           disabled={unsubscribingId === p.id}
+                          title="Ne plus contacter"
                         >
                           <Ban className="h-3 w-3" />
                         </Button>
@@ -359,6 +424,28 @@ export default function PlatformsPage({ params }: { params: Promise<{ id: string
                             <ExternalLink className="h-3 w-3 flex-shrink-0" />
                           </a>
                         )}
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-gray-300 hover:text-blue-500 hover:bg-blue-50"
+                          onClick={() => scrapeProspect(p)}
+                          disabled={scrapingId === p.id}
+                          title="Re-scraper ce prospect"
+                        >
+                          <RefreshCw className={`h-3 w-3 ${scrapingId === p.id ? 'animate-spin' : ''}`} />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-gray-300 hover:text-red-500 hover:bg-red-50"
+                          onClick={() => clearPlatformField(p)}
+                          disabled={clearingId === p.id}
+                          title={`Supprimer le compte ${platformConfig.label}`}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
                       </div>
                     </div>
                   )

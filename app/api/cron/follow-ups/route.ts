@@ -75,9 +75,20 @@ export async function GET() {
   let skipped = 0
   let rateLimited = 0
 
+  // Track prospect+step pairs already sent in this run (dedup protection)
+  const sentThisRun = new Set<string>()
+
   for (const message of dueMessages) {
     const prospect = (message as any).prospect
     const account = (message as any).email_account
+
+    // Skip if we already sent this prospect+step in this cron run (duplicate message in DB)
+    const runKey = `${prospect?.id}:${message.sequence_step}`
+    if (sentThisRun.has(runKey)) {
+      await supabase.from('outreach_messages').update({ status: 'failed' }).eq('id', message.id)
+      skipped++
+      continue
+    }
 
     // Skip if prospect already replied, sold, or dead
     if (['replied', 'negotiating', 'sold', 'dead'].includes(prospect?.status ?? '')) {
@@ -119,11 +130,49 @@ export async function GET() {
     // --- End rate limiting ---
 
     try {
+      // Check if this prospect+step was already sent (in DB) — protects against pre-existing duplicates
+      const { count: alreadySent } = await supabase
+        .from('outreach_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('prospect_id', prospect.id)
+        .eq('campaign_id', message.campaign_id)
+        .eq('sequence_step', message.sequence_step)
+        .in('status', ['sent', 'sending'])
+        .neq('id', message.id)
+
+      if (alreadySent && alreadySent > 0) {
+        await supabase.from('outreach_messages').update({ status: 'failed' }).eq('id', message.id)
+        skipped++
+        continue
+      }
+
+      // Atomic claim: mark as 'sending' only if still 'queued'
+      // If another cron instance already claimed it, this returns 0 rows
+      const { data: claimed } = await supabase
+        .from('outreach_messages')
+        .update({ status: 'sending' })
+        .eq('id', message.id)
+        .eq('status', 'queued')
+        .select('id')
+
+      if (!claimed || claimed.length === 0) {
+        // Already being processed by a concurrent cron run
+        skipped++
+        continue
+      }
+
       const { data: campaign } = await supabase
         .from('campaigns')
         .select('*, owned_domain:owned_domains(*)')
         .eq('id', message.campaign_id)
         .single()
+
+      // Skip if campaign is paused or completed
+      if (!campaign || campaign.status !== 'active') {
+        await supabase.from('outreach_messages').update({ status: 'queued' }).eq('id', message.id)
+        skipped++
+        continue
+      }
 
       const domainForSale = (campaign as any)?.owned_domain?.domain ?? ''
       const askingPrice = campaign?.asking_price ?? null
@@ -211,6 +260,7 @@ export async function GET() {
         .from('outreach_messages')
         .update({ status: 'sent', body, subject, sent_at: sentAt, resend_email_id: externalId })
         .eq('id', message.id)
+        .eq('status', 'sending')
 
       // Mark prospect as contacted if this was step 1
       if (message.sequence_step === 1) {
@@ -247,26 +297,42 @@ export async function GET() {
 
         const followUps = buildFollowUpSchedule(new Date(sentAt), customSequence)
         if (followUps.length > 0) {
-          await supabase.from('outreach_messages').insert(
-            followUps.map(fu => ({
-              prospect_id: prospect.id,
-              campaign_id: message.campaign_id,
-              user_id: message.user_id,
-              channel: 'email',
-              sequence_step: fu.step,
-              body: '',
-              ai_generated: true,
-              status: 'queued',
-              scheduled_for: fu.scheduledFor.toISOString(),
-              email_account_id: account.id,
-            }))
-          )
+          // Check which follow-up steps already exist (dedup protection)
+          const { data: existingFollowUps } = await supabase
+            .from('outreach_messages')
+            .select('sequence_step')
+            .eq('prospect_id', prospect.id)
+            .eq('campaign_id', message.campaign_id)
+            .in('status', ['queued', 'sending', 'sent'])
+            .gte('sequence_step', 2)
+
+          const existingSteps = new Set((existingFollowUps ?? []).map((m: any) => m.sequence_step))
+          const newFollowUps = followUps.filter(fu => !existingSteps.has(fu.step))
+
+          if (newFollowUps.length > 0) {
+            await supabase.from('outreach_messages').insert(
+              newFollowUps.map(fu => ({
+                prospect_id: prospect.id,
+                campaign_id: message.campaign_id,
+                user_id: message.user_id,
+                channel: 'email',
+                sequence_step: fu.step,
+                body: '',
+                ai_generated: true,
+                status: 'queued',
+                scheduled_for: fu.scheduledFor.toISOString(),
+                email_account_id: account.id,
+              }))
+            )
+          }
         }
       }
 
+      sentThisRun.add(runKey)
       processed++
     } catch (err) {
-      await supabase.from('outreach_messages').update({ status: 'failed' }).eq('id', message.id)
+      // Revert to queued so it retries next hour (not permanent failure)
+      await supabase.from('outreach_messages').update({ status: 'queued' }).eq('id', message.id)
       console.error(`Failed to send message ${message.id}:`, err)
     }
   }

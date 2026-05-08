@@ -34,15 +34,37 @@ const FIELD_LABELS: Record<string, string> = {
   instagram_url: 'Instagram', twitter_url: 'Twitter', whatsapp_number: 'WhatsApp',
 }
 
-// ── CSV parser (no external dep) ──────────────────────────────────────────────
+// ── Column header normalizer (accepts FR/EN variants) ─────────────────────────
+function normalizeHeader(h: string): string {
+  const s = h.toLowerCase().trim()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove accents
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  const map: Record<string, string> = {
+    domaine: 'domain', site: 'domain', site_web: 'domain', website: 'domain', url: 'domain',
+    entreprise: 'company_name', company: 'company_name', societe: 'company_name', organisation: 'company_name', organization: 'company_name',
+    prenom: 'first_name', firstname: 'first_name', first_name: 'first_name', given_name: 'first_name',
+    nom: 'last_name', lastname: 'last_name', last_name: 'last_name', family_name: 'last_name', surname: 'last_name',
+    mail: 'email', courriel: 'email', e_mail: 'email', adresse_email: 'email',
+    tel: 'phone', telephone: 'phone', mobile: 'phone', cellulaire: 'phone',
+    linkedin: 'linkedin_url', profil_linkedin: 'linkedin_url', compte_linkedin: 'linkedin_url', lien_linkedin: 'linkedin_url',
+    facebook: 'facebook_url', page_facebook: 'facebook_url', compte_facebook: 'facebook_url', fb: 'facebook_url',
+    instagram: 'instagram_url', compte_instagram: 'instagram_url', profil_instagram: 'instagram_url', ig: 'instagram_url', insta: 'instagram_url',
+    twitter: 'twitter_url', compte_twitter: 'twitter_url', x: 'twitter_url', twitter_x: 'twitter_url',
+    whatsapp: 'whatsapp_number', numero_whatsapp: 'whatsapp_number', whatsapp_no: 'whatsapp_number', wa: 'whatsapp_number',
+    remarques: 'notes', commentaires: 'notes', note: 'notes', commentaire: 'notes',
+  }
+  return map[s] ?? s
+}
+
+// ── CSV parser ────────────────────────────────────────────────────────────────
 function parseCSV(text: string): Record<string, string>[] {
   const lines = text.trim().split(/\r?\n/)
   if (lines.length < 2) return []
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''))
+  const rawHeaders = lines[0].split(',').map(h => h.trim().replace(/['"]/g, ''))
+  const headers = rawHeaders.map(normalizeHeader)
   return lines.slice(1)
     .filter(l => l.trim())
     .map(line => {
-      // Handle quoted fields with commas inside
       const vals: string[] = []
       let cur = ''
       let inQ = false
@@ -54,6 +76,20 @@ function parseCSV(text: string): Record<string, string>[] {
       vals.push(cur.trim())
       return Object.fromEntries(headers.map((h, i) => [h, vals[i]?.replace(/^['"]|['"]$/g, '') ?? '']))
     })
+}
+
+// ── Excel parser (SheetJS) ────────────────────────────────────────────────────
+async function parseExcel(file: File): Promise<Record<string, string>[]> {
+  const { read, utils } = await import('xlsx')
+  const buffer = await file.arrayBuffer()
+  const wb = read(buffer, { type: 'array' })
+  const ws = wb.Sheets[wb.SheetNames[0]]
+  const raw: Record<string, unknown>[] = utils.sheet_to_json(ws, { defval: '' })
+  return raw.map(row =>
+    Object.fromEntries(
+      Object.entries(row).map(([k, v]) => [normalizeHeader(String(k)), String(v ?? '')])
+    )
+  )
 }
 
 // ── Duplicate finder ──────────────────────────────────────────────────────────
@@ -85,6 +121,7 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
   const [selected, setSelected] = useState<Prospect | null>(null)
   const [scrapingIds, setScrapingIds] = useState<Set<string>>(new Set())
   const [unsubscribingId, setUnsubscribingId] = useState<string | null>(null)
+  const [cancellingEmailsId, setCancellingEmailsId] = useState<string | null>(null)
 
   // ── Edit mode ─────────────────────────────────────────────────────────────
   const [editMode, setEditMode] = useState(false)
@@ -103,8 +140,11 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
 
   // ── CSV import dialog ─────────────────────────────────────────────────────
   const [csvOpen, setCsvOpen] = useState(false)
-  const [csvStep, setCsvStep] = useState<'upload' | 'preview'>('upload')
+  const [csvStep, setCsvStep] = useState<'upload' | 'mapping' | 'preview'>('upload')
   const [csvRows, setCsvRows] = useState<Record<string, string>[]>([])
+  const [rawCsvRows, setRawCsvRows] = useState<Record<string, string>[]>([])
+  const [detectedCols, setDetectedCols] = useState<string[]>([])
+  const [colMap, setColMap] = useState<Record<string, string>>({})
   const [csvImporting, setCsvImporting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -112,6 +152,12 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
   const [pasteImporting, setPasteImporting] = useState(false)
+
+  // ── Platform paste dialog ─────────────────────────────────────────────────
+  const [platformOpen, setPlatformOpen] = useState(false)
+  const [platformType, setPlatformType] = useState<'instagram' | 'whatsapp' | 'linkedin' | 'facebook' | 'twitter'>('instagram')
+  const [platformText, setPlatformText] = useState('')
+  const [platformImporting, setPlatformImporting] = useState(false)
 
   // ── Duplicates dialog ─────────────────────────────────────────────────────
   const [dupOpen, setDupOpen] = useState(false)
@@ -150,14 +196,21 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
     }
   }
 
-  async function scrapeAll() {
-    const toScrape = prospects.filter(p => p.scrape_status === 'pending' || p.scrape_status === 'failed')
-    toast.info(`Scraping ${toScrape.length} prospects...`)
-    for (const p of toScrape) {
-      await scrapeOne(p)
-      await new Promise(r => setTimeout(r, 500))
+  const [scrapeAllProgress, setScrapeAllProgress] = useState<{ done: number; total: number } | null>(null)
+
+  async function scrapeAll(all = false) {
+    const toScrape = all
+      ? prospects
+      : prospects.filter(p => p.scrape_status === 'pending' || p.scrape_status === 'failed')
+    if (toScrape.length === 0) { toast.info('Aucun prospect à scraper'); return }
+    setScrapeAllProgress({ done: 0, total: toScrape.length })
+    for (let i = 0; i < toScrape.length; i++) {
+      await scrapeOne(toScrape[i])
+      setScrapeAllProgress({ done: i + 1, total: toScrape.length })
+      await new Promise(r => setTimeout(r, 400))
     }
-    toast.success('Scraping terminé')
+    setScrapeAllProgress(null)
+    toast.success(`Scraping terminé — ${toScrape.length} prospect${toScrape.length > 1 ? 's' : ''} traité${toScrape.length > 1 ? 's' : ''}`)
   }
 
   async function unsubscribeProspect(prospect: Prospect) {
@@ -172,6 +225,18 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
     } else {
       toast.error('Erreur')
     }
+  }
+
+  async function cancelQueuedEmails(prospect: Prospect) {
+    const queued = contactHistory.filter(m => m.channel === 'email' && m.status === 'queued')
+    if (queued.length === 0) { toast.info('Aucun email planifié à annuler'); return }
+    if (!confirm(`Annuler ${queued.length} email${queued.length > 1 ? 's' : ''} planifié${queued.length > 1 ? 's' : ''} pour "${prospect.domain}" ? Les autres canaux ne sont pas affectés.`)) return
+    setCancellingEmailsId(prospect.id)
+    const ids = queued.map((m: any) => m.id)
+    await supabase.from('outreach_messages').update({ status: 'failed' }).in('id', ids)
+    setCancellingEmailsId(null)
+    toast.success(`${queued.length} email${queued.length > 1 ? 's' : ''} annulé${queued.length > 1 ? 's' : ''}`)
+    loadContactHistory(prospect.id)
   }
 
   async function updateStatus(prospectId: string, status: string) {
@@ -272,24 +337,66 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
     if (data?.id) setTimeout(() => scrapeOne(data as Prospect), 300)
   }
 
-  // ── CSV Import ─────────────────────────────────────────────────────────────
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  // ── CSV / Excel Import ─────────────────────────────────────────────────────
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    if (!file.name.endsWith('.csv')) { toast.error('Fichier CSV requis'); return }
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string
-      const rows = parseCSV(text)
-      if (rows.length === 0) { toast.error('Fichier vide ou mal formaté'); return }
-      if (!rows[0].domain && !rows[0]['domain']) {
-        toast.error('Colonne "domain" manquante dans le CSV')
-        return
+    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls')
+    const isCsv = file.name.endsWith('.csv')
+    if (!isExcel && !isCsv) { toast.error('Fichier CSV ou Excel (.xlsx, .xls) requis'); return }
+
+    try {
+      let rows: Record<string, string>[]
+      if (isExcel) {
+        rows = await parseExcel(file)
+      } else {
+        const text = await file.text()
+        rows = parseCSV(text)
       }
-      setCsvRows(rows)
-      setCsvStep('preview')
+      if (rows.length === 0) { toast.error('Fichier vide ou mal formaté'); return }
+
+      // Detect raw column names (before normalization) for manual mapping
+      const cols = Object.keys(rows[0])
+      setDetectedCols(cols)
+      setRawCsvRows(rows)
+
+      // Build initial auto-mapping
+      const autoMap: Record<string, string> = {}
+      const CANONICAL_FIELDS = ['domain','company_name','first_name','last_name','email','phone','linkedin_url','facebook_url','instagram_url','twitter_url','whatsapp_number','notes']
+      for (const field of CANONICAL_FIELDS) {
+        // Find a detected col that normalizes to this field
+        const match = cols.find(c => normalizeHeader(c) === field)
+        if (match) autoMap[field] = match
+      }
+      setColMap(autoMap)
+
+      if (autoMap.domain) {
+        // Auto-mapping found domain → go straight to preview
+        const mapped = rows.map(r => remapRow(r, autoMap))
+        setCsvRows(mapped)
+        setCsvStep('preview')
+      } else {
+        // Need manual mapping
+        setCsvStep('mapping')
+      }
+    } catch (err) {
+      toast.error('Erreur lecture du fichier')
     }
-    reader.readAsText(file)
+  }
+
+  function remapRow(raw: Record<string, string>, map: Record<string, string>): Record<string, string> {
+    const out: Record<string, string> = {}
+    for (const [field, col] of Object.entries(map)) {
+      if (col && raw[col] !== undefined) out[field] = raw[col]
+    }
+    return out
+  }
+
+  function applyMapping() {
+    if (!colMap.domain) { toast.error('La colonne "domain" est obligatoire'); return }
+    const mapped = rawCsvRows.map(r => remapRow(r, colMap))
+    setCsvRows(mapped)
+    setCsvStep('preview')
   }
 
   async function handleCsvImport() {
@@ -359,6 +466,9 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
   function openCsvDialog() {
     setCsvStep('upload')
     setCsvRows([])
+    setRawCsvRows([])
+    setDetectedCols([])
+    setColMap({})
     if (fileInputRef.current) fileInputRef.current.value = ''
     setCsvOpen(true)
   }
@@ -457,6 +567,96 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
     await load()
   }
 
+  // ── Clear individual social field ─────────────────────────────────────────
+  async function clearSocialField(prospectId: string, field: string) {
+    await supabase.from('prospects').update({ [field]: null }).eq('id', prospectId)
+    setSelected(prev => prev ? { ...prev, [field]: null } as Prospect : null)
+    setProspects(prev => prev.map(p => p.id === prospectId ? { ...p, [field]: null } as Prospect : p))
+    toast.success('Contact supprimé')
+  }
+
+  // ── Platform paste import ──────────────────────────────────────────────────
+  const PLATFORM_CFG: Record<string, { field: string; label: string; hint: string; parse: (line: string) => { domain: string; [k: string]: string } | null }> = {
+    instagram: {
+      field: 'instagram_url', label: 'Instagram', hint: 'Un compte par ligne : @handle, handle, ou https://instagram.com/handle',
+      parse: (line) => {
+        const clean = line.trim().replace(/^https?:\/\/(www\.)?instagram\.com\//, '').replace(/^@/, '').replace(/[/?#].*$/, '').toLowerCase()
+        return clean && clean.length > 1 ? { domain: `instagram.com/${clean}`, instagram_url: `https://instagram.com/${clean}` } : null
+      },
+    },
+    whatsapp: {
+      field: 'whatsapp_number', label: 'WhatsApp', hint: 'Un numéro par ligne : +33612345678, wa.me/33612345678...',
+      parse: (line) => {
+        const clean = line.trim().replace(/^https?:\/\/wa\.me\//, '+').replace(/(?!^\+)[^0-9]/g, '')
+        const num = clean.startsWith('+') ? clean : '+' + clean.replace(/^0/, '')
+        return num.length >= 8 ? { domain: `wa.me/${num.replace(/^\+/, '')}`, whatsapp_number: num } : null
+      },
+    },
+    linkedin: {
+      field: 'linkedin_url', label: 'LinkedIn', hint: 'Un profil par ligne : linkedin.com/in/nom, @nom...',
+      parse: (line) => {
+        const m = line.trim().match(/linkedin\.com\/(in|company)\/([^/?# ]+)/i)
+        if (m) return { domain: `linkedin.com/${m[1]}/${m[2]}`, linkedin_url: `https://linkedin.com/${m[1]}/${m[2]}` }
+        const clean = line.trim().replace(/^@/, '').replace(/[/?# ].*/,'').toLowerCase()
+        return clean.length > 1 ? { domain: `linkedin.com/in/${clean}`, linkedin_url: `https://linkedin.com/in/${clean}` } : null
+      },
+    },
+    facebook: {
+      field: 'facebook_url', label: 'Facebook', hint: 'Un profil/page par ligne : facebook.com/page, @page...',
+      parse: (line) => {
+        const clean = line.trim().replace(/^https?:\/\/(www\.)?facebook\.com\//, '').replace(/^@/, '').replace(/[/?# ].*/,'').toLowerCase()
+        return clean.length > 1 ? { domain: `facebook.com/${clean}`, facebook_url: `https://facebook.com/${clean}` } : null
+      },
+    },
+    twitter: {
+      field: 'twitter_url', label: 'Twitter / X', hint: 'Un compte par ligne : @handle, handle, ou https://x.com/handle',
+      parse: (line) => {
+        const clean = line.trim().replace(/^https?:\/\/(www\.)?(twitter|x)\.com\//, '').replace(/^@/, '').replace(/[/?# ].*/,'').toLowerCase()
+        return clean.length > 1 ? { domain: `twitter.com/${clean}`, twitter_url: `https://twitter.com/${clean}` } : null
+      },
+    },
+  }
+
+  async function handlePlatformImport() {
+    const cfg = PLATFORM_CFG[platformType]
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { toast.error('Non authentifié'); return }
+
+    const lines = platformText.split(/[\n,;]+/).map(l => l.trim()).filter(Boolean)
+    const parsed = lines.map(cfg.parse).filter(Boolean) as { domain: string; [k: string]: string }[]
+    if (parsed.length === 0) { toast.error('Aucun contact valide détecté'); return }
+
+    // Dedup against existing
+    const existingDomains = new Set(prospects.map(p => p.domain.toLowerCase()))
+    const toInsert = parsed.filter(r => !existingDomains.has(r.domain.toLowerCase()))
+    const skipped = parsed.length - toInsert.length
+
+    if (toInsert.length === 0) { toast.info('Tous ces contacts sont déjà présents'); return }
+
+    setPlatformImporting(true)
+    const rows = toInsert.map(r => ({
+      campaign_id: campaignId,
+      user_id: user.id,
+      domain: r.domain,
+      tld: r.domain.split('.').pop() ?? 'com',
+      domain_type: 'other' as const,
+      scrape_status: 'skipped' as const,
+      status: 'to_contact' as const,
+      priority: 5,
+      [cfg.field]: r[cfg.field],
+    }))
+
+    const { data: saved, error } = await supabase.from('prospects').insert(rows).select()
+    setPlatformImporting(false)
+    if (error) { toast.error('Erreur : ' + error.message); return }
+
+    const n = saved?.length ?? 0
+    toast.success(`${n} contact${n > 1 ? 's' : ''} ${cfg.label} importé${n > 1 ? 's' : ''}${skipped > 0 ? ` (${skipped} doublon${skipped > 1 ? 's' : ''} ignoré${skipped > 1 ? 's' : ''})` : ''}`)
+    setPlatformOpen(false)
+    setPlatformText('')
+    await load()
+  }
+
   // ── Rendering ─────────────────────────────────────────────────────────────
   const filtered = filterStatus === 'all' ? prospects : prospects.filter(p => p.status === filterStatus)
   const pendingScrape = prospects.filter(p => p.scrape_status === 'pending' || p.scrape_status === 'failed').length
@@ -489,10 +689,22 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
           </SelectContent>
         </Select>
 
-        {pendingScrape > 0 && (
-          <Button variant="outline" size="sm" onClick={scrapeAll}>
-            Scraper tout ({pendingScrape} en attente)
-          </Button>
+        {scrapeAllProgress ? (
+          <span className="text-sm text-blue-600 font-medium flex items-center gap-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Scraping {scrapeAllProgress.done}/{scrapeAllProgress.total}...
+          </span>
+        ) : (
+          <>
+            {pendingScrape > 0 && (
+              <Button variant="outline" size="sm" onClick={() => scrapeAll(false)}>
+                ↺ Scraper en attente ({pendingScrape})
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={() => scrapeAll(true)} disabled={prospects.length === 0}>
+              ↺ Tout re-scraper ({prospects.length})
+            </Button>
+          </>
         )}
 
         <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
@@ -502,12 +714,17 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
 
         <Button size="sm" variant="outline" onClick={openCsvDialog}>
           <Upload className="h-4 w-4 mr-1" />
-          Importer CSV
+          Importer Excel / CSV
         </Button>
 
         <Button size="sm" variant="outline" onClick={() => { setPasteText(''); setPasteOpen(true) }}>
           <PlusCircle className="h-4 w-4 mr-1" />
           Coller des sites
+        </Button>
+
+        <Button size="sm" variant="outline" onClick={() => { setPlatformText(''); setPlatformOpen(true) }}>
+          <Instagram className="h-4 w-4 mr-1" />
+          Ajouter par plateforme
         </Button>
 
         {dupCount > 0 && (
@@ -672,31 +889,96 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
         </DialogContent>
       </Dialog>
 
-      {/* ── CSV Import Dialog ─────────────────────────────────────────────── */}
+      {/* ── Excel / CSV Import Dialog ─────────────────────────────────────── */}
       <Dialog open={csvOpen} onOpenChange={(o) => { if (!o) { setCsvOpen(false); setCsvStep('upload'); setCsvRows([]) } }}>
         <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>
-              {csvStep === 'upload' ? 'Importer des prospects via CSV' : `Aperçu — ${csvRows.length} ligne${csvRows.length > 1 ? 's' : ''} détectée${csvRows.length > 1 ? 's' : ''}`}
+              {csvStep === 'upload' ? 'Importer des prospects (Excel ou CSV)'
+                : csvStep === 'mapping' ? `Associer les colonnes — ${rawCsvRows.length} ligne${rawCsvRows.length > 1 ? 's' : ''} détectée${rawCsvRows.length > 1 ? 's' : ''}`
+                : `Aperçu — ${csvRows.length} ligne${csvRows.length > 1 ? 's' : ''} détectée${csvRows.length > 1 ? 's' : ''}`}
             </DialogTitle>
           </DialogHeader>
 
-          {csvStep === 'upload' ? (
+          {csvStep === 'mapping' ? (
+            <div className="space-y-4 py-2 overflow-y-auto">
+              <p className="text-sm text-gray-500">
+                La colonne <strong>domain</strong> n'a pas été détectée automatiquement. Associe tes colonnes aux champs ci-dessous.
+              </p>
+              <div className="rounded-lg border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b">
+                    <tr>
+                      <th className="text-left px-4 py-2 font-medium text-gray-600 w-1/2">Champ</th>
+                      <th className="text-left px-4 py-2 font-medium text-gray-600 w-1/2">Colonne dans ton fichier</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {([
+                      { field: 'domain', label: 'Domaine / Site web', required: true },
+                      { field: 'company_name', label: "Nom de l'entreprise", required: false },
+                      { field: 'first_name', label: 'Prénom du contact', required: false },
+                      { field: 'last_name', label: 'Nom du contact', required: false },
+                      { field: 'email', label: 'Email', required: false },
+                      { field: 'phone', label: 'Téléphone', required: false },
+                      { field: 'linkedin_url', label: 'LinkedIn', required: false },
+                      { field: 'facebook_url', label: 'Facebook', required: false },
+                      { field: 'instagram_url', label: 'Instagram', required: false },
+                      { field: 'twitter_url', label: 'Twitter / X', required: false },
+                      { field: 'whatsapp_number', label: 'WhatsApp', required: false },
+                      { field: 'notes', label: 'Notes', required: false },
+                    ] as { field: string; label: string; required: boolean }[]).map(({ field, label, required }) => (
+                      <tr key={field} className={required && !colMap[field] ? 'bg-red-50' : ''}>
+                        <td className="px-4 py-2 text-gray-700">
+                          {label}{required && <span className="text-red-500 ml-1">*</span>}
+                        </td>
+                        <td className="px-4 py-2">
+                          <select
+                            className="w-full border rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={colMap[field] ?? ''}
+                            onChange={e => setColMap(prev => ({ ...prev, [field]: e.target.value }))}
+                          >
+                            <option value="">— ignorer —</option>
+                            {detectedCols.map(col => (
+                              <option key={col} value={col}>{col}</option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="bg-gray-50 rounded p-3 text-xs text-gray-500">
+                <strong>Colonnes détectées :</strong> {detectedCols.join(', ')}
+              </div>
+            </div>
+          ) : csvStep === 'upload' ? (
             <div className="space-y-5 py-2">
-              <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm space-y-2">
-                <p className="font-medium text-blue-800">Format CSV attendu :</p>
-                <code className="block bg-white rounded border border-blue-200 p-2 text-xs text-gray-700 font-mono overflow-x-auto whitespace-pre">
-{`domain,company_name,first_name,last_name,email,phone,linkedin_url,facebook_url,instagram_url,twitter_url,whatsapp_number,notes
-karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,linkedin.com/in/jean,facebook.com/karateclub,,@karateclub,,`}
-                </code>
-                <p className="text-blue-700 text-xs">Seule la colonne <strong>domain</strong> est obligatoire. Les profils sociaux déjà connus ne seront pas re-scrappés.</p>
+              <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm space-y-3">
+                <p className="font-medium text-blue-800">Colonnes reconnues automatiquement :</p>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-blue-700">
+                  <div><span className="font-mono bg-white px-1 rounded">domain</span> / domaine / site <span className="text-red-500 font-bold">*</span></div>
+                  <div><span className="font-mono bg-white px-1 rounded">company_name</span> / entreprise</div>
+                  <div><span className="font-mono bg-white px-1 rounded">first_name</span> / prénom</div>
+                  <div><span className="font-mono bg-white px-1 rounded">last_name</span> / nom</div>
+                  <div><span className="font-mono bg-white px-1 rounded">email</span> / courriel</div>
+                  <div><span className="font-mono bg-white px-1 rounded">phone</span> / téléphone</div>
+                  <div><span className="font-mono bg-white px-1 rounded">linkedin</span> / profil_linkedin</div>
+                  <div><span className="font-mono bg-white px-1 rounded">facebook</span> / page_facebook</div>
+                  <div><span className="font-mono bg-white px-1 rounded">instagram</span> / compte_instagram</div>
+                  <div><span className="font-mono bg-white px-1 rounded">twitter</span> / X</div>
+                  <div><span className="font-mono bg-white px-1 rounded">whatsapp</span> / numéro_whatsapp</div>
+                  <div><span className="font-mono bg-white px-1 rounded">notes</span> / remarques</div>
+                </div>
+                <p className="text-blue-700 text-xs">Les noms de colonnes en français ou anglais sont acceptés automatiquement. Seul <strong>domain</strong> est obligatoire.</p>
               </div>
               <div className="space-y-2">
-                <Label>Fichier CSV</Label>
+                <Label>Fichier Excel (.xlsx, .xls) ou CSV</Label>
                 <Input
                   ref={fileInputRef}
                   type="file"
-                  accept=".csv"
+                  accept=".csv,.xlsx,.xls"
                   onChange={handleFileChange}
                   className="cursor-pointer"
                 />
@@ -736,9 +1018,18 @@ karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,li
           <DialogFooter className="mt-2 flex-shrink-0">
             {csvStep === 'upload' ? (
               <Button variant="outline" onClick={() => setCsvOpen(false)}>Annuler</Button>
+            ) : csvStep === 'mapping' ? (
+              <>
+                <Button variant="outline" onClick={() => { setCsvStep('upload'); setRawCsvRows([]); setDetectedCols([]); if (fileInputRef.current) fileInputRef.current.value = '' }}>
+                  ← Changer de fichier
+                </Button>
+                <Button onClick={applyMapping} disabled={!colMap.domain}>
+                  Aperçu →
+                </Button>
+              </>
             ) : (
               <>
-                <Button variant="outline" onClick={() => { setCsvStep('upload'); setCsvRows([]); if (fileInputRef.current) fileInputRef.current.value = '' }}>
+                <Button variant="outline" onClick={() => { setCsvStep('upload'); setCsvRows([]); setRawCsvRows([]); setDetectedCols([]); if (fileInputRef.current) fileInputRef.current.value = '' }}>
                   ← Changer de fichier
                 </Button>
                 <Button onClick={handleCsvImport} disabled={csvImporting}>
@@ -780,6 +1071,56 @@ karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,li
             </Button>
             <Button onClick={handlePasteImport} disabled={pasteImporting || !pasteText.trim()}>
               {pasteImporting ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Import en cours...</> : <>Importer et scraper</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Platform Paste Dialog ─────────────────────────────────────────── */}
+      <Dialog open={platformOpen} onOpenChange={(o) => { if (!o) { setPlatformOpen(false); setPlatformText('') } }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Ajouter des contacts par plateforme</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {/* Platform selector */}
+            <div className="flex flex-wrap gap-2">
+              {(Object.entries(PLATFORM_CFG) as [string, typeof PLATFORM_CFG[string]][]).map(([key, cfg]) => (
+                <button
+                  key={key}
+                  onClick={() => setPlatformType(key as any)}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+                    platformType === key
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'
+                  }`}
+                >
+                  {cfg.label}
+                </button>
+              ))}
+            </div>
+            <div className="rounded bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
+              {PLATFORM_CFG[platformType].hint}
+            </div>
+            <textarea
+              className="w-full border rounded-lg p-3 text-sm font-mono h-48 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder={`Colle ici ta liste de comptes ${PLATFORM_CFG[platformType].label}...`}
+              value={platformText}
+              onChange={e => setPlatformText(e.target.value)}
+            />
+            {platformText.trim() && (
+              <p className="text-xs text-gray-500">
+                {platformText.split(/[\n,;]+/).map(l => PLATFORM_CFG[platformType].parse(l.trim())).filter(Boolean).length} contact(s) valide(s) détecté(s)
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPlatformOpen(false)}>Annuler</Button>
+            <Button onClick={handlePlatformImport} disabled={platformImporting || !platformText.trim()}>
+              {platformImporting
+                ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Import...</>
+                : <><Upload className="h-4 w-4 mr-2" />Importer</>
+              }
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -983,14 +1324,25 @@ karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,li
                     {/* Social links */}
                     <div className="space-y-2">
                       <p className="text-sm font-medium text-gray-700">Réseaux sociaux</p>
-                      <div className="space-y-2">
-                        {selected.linkedin_url && <SocialLink icon={<Linkedin className="h-4 w-4 text-blue-600" />} label="LinkedIn" url={selected.linkedin_url} />}
-                        {selected.facebook_url && <SocialLink icon={<Facebook className="h-4 w-4 text-blue-500" />} label="Facebook" url={selected.facebook_url} />}
-                        {selected.instagram_url && <SocialLink icon={<Instagram className="h-4 w-4 text-pink-500" />} label="Instagram" url={selected.instagram_url} />}
-                        {selected.twitter_url && <SocialLink icon={<Twitter className="h-4 w-4 text-sky-500" />} label="Twitter/X" url={selected.twitter_url} />}
-                        {selected.whatsapp_number && (
-                          <SocialLink icon={<MessageCircle className="h-4 w-4 text-green-500" />} label="WhatsApp" url={`https://wa.me/${selected.whatsapp_number.replace(/[^0-9]/g, '')}`} />
-                        )}
+                      <div className="space-y-1.5">
+                        {([
+                          { field: 'linkedin_url', icon: <Linkedin className="h-4 w-4 text-blue-600" />, label: 'LinkedIn', url: selected.linkedin_url },
+                          { field: 'facebook_url', icon: <Facebook className="h-4 w-4 text-blue-500" />, label: 'Facebook', url: selected.facebook_url },
+                          { field: 'instagram_url', icon: <Instagram className="h-4 w-4 text-pink-500" />, label: 'Instagram', url: selected.instagram_url },
+                          { field: 'twitter_url', icon: <Twitter className="h-4 w-4 text-sky-500" />, label: 'Twitter/X', url: selected.twitter_url },
+                          { field: 'whatsapp_number', icon: <MessageCircle className="h-4 w-4 text-green-500" />, label: 'WhatsApp', url: selected.whatsapp_number ? `https://wa.me/${selected.whatsapp_number.replace(/[^0-9]/g, '')}` : null },
+                        ] as { field: string; icon: React.ReactNode; label: string; url: string | null | undefined }[]).filter(s => s.url).map(s => (
+                          <div key={s.field} className="flex items-center gap-1">
+                            <div className="flex-1 min-w-0"><SocialLink icon={s.icon} label={s.label} url={s.url!} /></div>
+                            <button
+                              onClick={() => clearSocialField(selected.id, s.field)}
+                              className="shrink-0 text-gray-300 hover:text-red-500 transition-colors p-1 rounded"
+                              title={`Supprimer ${s.label}`}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
                         {!selected.linkedin_url && !selected.facebook_url && !selected.instagram_url && !selected.twitter_url && !selected.whatsapp_number && (
                           <p className="text-sm text-gray-400">Aucun réseau trouvé.</p>
                         )}
@@ -1056,6 +1408,19 @@ karate-club.fr,Karate Club Paris,Jean,Dupont,jean@karate-club.fr,+33612345678,li
                     <Link href={`/campaigns/${campaignId}/outreach?prospect=${selected.id}`}>
                       <Button className="w-full">✉️ Générer un message pour ce prospect</Button>
                     </Link>
+                    {contactHistory.some(m => m.channel === 'email' && m.status === 'queued') && (
+                      <Button
+                        variant="outline"
+                        className="w-full border-orange-200 text-orange-700 hover:bg-orange-50"
+                        onClick={() => cancelQueuedEmails(selected)}
+                        disabled={cancellingEmailsId === selected.id}
+                      >
+                        {cancellingEmailsId === selected.id
+                          ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Annulation...</>
+                          : <>✉️ Annuler les {contactHistory.filter(m => m.channel === 'email' && m.status === 'queued').length} email{contactHistory.filter(m => m.channel === 'email' && m.status === 'queued').length > 1 ? 's' : ''} planifié{contactHistory.filter(m => m.channel === 'email' && m.status === 'queued').length > 1 ? 's' : ''}</>
+                        }
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       className="w-full border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"

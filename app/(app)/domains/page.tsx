@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
+import { useRouter } from 'next/navigation'
 import type { OwnedDomain } from '@/types/database'
 import { Plus, Pencil, Trash2, Globe } from 'lucide-react'
 
@@ -25,6 +26,7 @@ export default function DomainsPage() {
   const [editDomain, setEditDomain] = useState<OwnedDomain | null>(null)
   const [form, setForm] = useState({ domain: '', asking_price: '', notes: '', status: 'active' })
   const supabase = createClient()
+  const router = useRouter()
 
   async function load() {
     const { data } = await supabase.from('owned_domains').select('*').order('created_at', { ascending: false })
@@ -63,13 +65,36 @@ export default function DomainsPage() {
       const { error } = await supabase.from('owned_domains').update(payload).eq('id', editDomain.id)
       if (error) { toast.error(error.message); return }
       toast.success('Domaine mis à jour')
+      setOpen(false)
+      load()
     } else {
-      const { error } = await supabase.from('owned_domains').insert({ ...payload, user_id: user.id })
+      const { data: newDomain, error } = await supabase
+        .from('owned_domains')
+        .insert({ ...payload, user_id: user.id })
+        .select()
+        .single()
       if (error) { toast.error(error.message); return }
-      toast.success('Domaine ajouté')
+
+      // Auto-create a campaign for this domain
+      const res = await fetch('/api/campaigns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          owned_domain_id: newDomain.id,
+          name: newDomain.domain,
+          asking_price: newDomain.asking_price ?? null,
+        }),
+      })
+      const campaign = await res.json()
+      setOpen(false)
+      if (res.ok) {
+        toast.success(`Domaine et campagne créés — configure les templates et le compte email.`)
+        router.push(`/campaigns/${campaign.id}`)
+      } else {
+        toast.success('Domaine ajouté')
+        load()
+      }
     }
-    setOpen(false)
-    load()
   }
 
   async function handleDelete(id: string) {

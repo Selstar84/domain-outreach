@@ -188,6 +188,31 @@ export interface Settings {
   whoisxml_api_key: string | null
   hunter_api_key: string | null
   anthropic_api_key: string | null
+  google_places_api_key: string | null
+
+  // ── Prospect discovery ──────────────────────────────────────────────────────
+  prospect_finder_tool: 'apollo' | 'snov' | 'hunter' | 'dropcontact' | null
+  apollo_api_key: string | null
+  snov_api_key: string | null
+  dropcontact_api_key: string | null
+
+  // ── LinkedIn automation ─────────────────────────────────────────────────────
+  linkedin_tool: 'phantombuster' | 'lemlist' | null
+  phantombuster_api_key: string | null
+  phantombuster_linkedin_agent_id: string | null
+  lemlist_api_key: string | null
+
+  // ── WhatsApp ────────────────────────────────────────────────────────────────
+  whatsapp_tool: 'twilio' | null
+  twilio_account_sid: string | null
+  twilio_auth_token: string | null
+  twilio_whatsapp_number: string | null
+
+  // ── Instagram & Facebook (Apify) ────────────────────────────────────────────
+  apify_api_key: string | null
+  instagram_session_cookie: string | null
+  facebook_session_cookie: string | null
+
   social_daily_limit: number
   email_daily_limit_global: number
   check_timeout_ms: number

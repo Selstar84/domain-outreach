@@ -1,9 +1,10 @@
 /**
  * POST /api/campaigns/[id]/appraise
- * Runs 3 parallel agents for domain appraisal:
- *  1. NameBio — comparable past sales
- *  2. Google Trends — keyword interest over 12 months
- *  3. Claude Brandability — score breakdown + value estimate
+ * Runs 4 parallel agents for domain appraisal:
+ *  1. NameBio        — comparable past sales (free)
+ *  2. Google Trends  — keyword interest over 12 months (free)
+ *  3. GoDaddy        — GoValue instant estimate (free, no key)
+ *  4. Claude         — brandability score + value estimate
  *
  * Results saved to campaigns.domain_appraisal (JSONB)
  */
@@ -11,9 +12,11 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { searchNameBio } from '@/lib/appraisal/namebio'
 import { getKeywordTrends } from '@/lib/appraisal/google-trends'
+import { getGoDaddyValue } from '@/lib/appraisal/godaddy'
 import { scoreBrandability } from '@/lib/appraisal/brandability'
 import type { NameBioResult } from '@/lib/appraisal/namebio'
 import type { TrendsResult } from '@/lib/appraisal/google-trends'
+import type { GoDaddyAppraisal } from '@/lib/appraisal/godaddy'
 import type { BrandabilityScore } from '@/lib/appraisal/brandability'
 
 export interface DomainAppraisal {
@@ -22,6 +25,7 @@ export interface DomainAppraisal {
   appraised_at: string
   namebio: NameBioResult
   trends: TrendsResult
+  godaddy: GoDaddyAppraisal
   brandability: BrandabilityScore
 }
 
@@ -38,7 +42,6 @@ function extractKeyword(domain: string): string {
 function getGeoCode(analysis: any): string {
   const cc = analysis?.country_code
   if (!cc) return ''
-  // Google Trends uses ISO 3166-1 alpha-2
   return cc.toUpperCase()
 }
 
@@ -84,10 +87,11 @@ export async function POST(
   const keyword = (ownedDomain?.word ?? extractKeyword(domainName)).split(' ')[0]
   const geo = getGeoCode(analysis)
 
-  // ── Run 3 agents in parallel ─────────────────────────────────────────────
-  const [namebioResult, trendsResult] = await Promise.allSettled([
+  // ── Run 3 free agents in parallel ────────────────────────────────────────
+  const [namebioResult, trendsResult, godaddyResult] = await Promise.allSettled([
     searchNameBio(keyword, { maxResults: 15, maxAgeDays: 1095, minPrice: 100 }),
     getKeywordTrends(keyword, geo),
+    getGoDaddyValue(domainName),
   ])
 
   const namebio: NameBioResult = namebioResult.status === 'fulfilled'
@@ -98,8 +102,13 @@ export async function POST(
     ? trendsResult.value
     : { keyword, geo, points: [], current_interest: 0, avg_interest: 0, direction: 'unknown', direction_pct: 0 }
 
-  // Brandability uses NameBio avg to calibrate value estimate
-  const brandability = await scoreBrandability(domainName, anthropicKey, namebio.avg_price)
+  const godaddy: GoDaddyAppraisal = godaddyResult.status === 'fulfilled'
+    ? godaddyResult.value
+    : { domain: domainName, govalue: null, available: false }
+
+  // ── Claude brandability (uses NameBio avg + GoDaddy to calibrate) ─────────
+  const referencePrice = namebio.avg_price ?? godaddy.govalue ?? null
+  const brandability = await scoreBrandability(domainName, anthropicKey, referencePrice)
 
   const appraisal: DomainAppraisal = {
     domain: domainName,
@@ -107,6 +116,7 @@ export async function POST(
     appraised_at: new Date().toISOString(),
     namebio,
     trends,
+    godaddy,
     brandability,
   }
 

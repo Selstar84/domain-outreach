@@ -120,6 +120,11 @@ interface DomainAppraisal {
     estimated_value_range: { min: number; max: number }
     best_buyer_profile: string
   }
+  godaddy: {
+    domain: string
+    govalue: number | null
+    available: boolean
+  }
 }
 
 const DEFAULT_TEMPLATES: TemplateStep[] = [
@@ -870,17 +875,21 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
                    appraisal.brandability.verdict === 'average' ? '😐 Moyen' : '⚠ Faible'}
                 </Badge>
               </div>
-              <div className="bg-white rounded-xl p-4 border border-amber-100 text-center">
-                <p className="text-xs text-amber-600 font-medium mb-1">Valeur estimée</p>
+              <div className="bg-white rounded-xl p-4 border border-amber-100 text-center space-y-1">
+                <p className="text-xs text-amber-600 font-medium">Valeur estimée (IA)</p>
                 <p className="text-2xl font-bold text-gray-800">
                   ${appraisal.brandability.estimated_value_range.min.toLocaleString()}
+                  <span className="text-sm font-normal text-gray-400"> – ${appraisal.brandability.estimated_value_range.max.toLocaleString()}</span>
                 </p>
-                <p className="text-sm text-gray-500">
-                  — ${appraisal.brandability.estimated_value_range.max.toLocaleString()}
-                </p>
+                {appraisal.godaddy?.govalue && (
+                  <div className="flex items-center justify-center gap-1.5 mt-1 bg-blue-50 rounded-lg px-2 py-1">
+                    <span className="text-xs text-blue-500 font-medium">GoDaddy GoValue :</span>
+                    <span className="text-sm font-bold text-blue-700">${appraisal.godaddy.govalue.toLocaleString()}</span>
+                  </div>
+                )}
                 {appraisal.namebio.avg_price && (
-                  <p className="text-xs text-amber-600 mt-1">
-                    Moy. marché : ${appraisal.namebio.avg_price.toLocaleString()}
+                  <p className="text-xs text-amber-600">
+                    Moy. NameBio : ${appraisal.namebio.avg_price.toLocaleString()}
                   </p>
                 )}
               </div>

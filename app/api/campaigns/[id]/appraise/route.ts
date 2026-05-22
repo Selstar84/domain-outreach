@@ -1,10 +1,11 @@
 /**
  * POST /api/campaigns/[id]/appraise
- * Runs 4 parallel agents for domain appraisal:
+ * Runs 5 parallel agents for domain appraisal:
  *  1. NameBio        — comparable past sales (free)
  *  2. Google Trends  — keyword interest over 12 months (free)
  *  3. GoDaddy        — GoValue instant estimate (free, no key)
- *  4. Claude         — brandability score + value estimate
+ *  4. Atom.com       — marketplace appraisal (requires atom_appraisal_api_key)
+ *  5. Claude         — brandability score + value estimate
  *
  * Results saved to campaigns.domain_appraisal (JSONB)
  */
@@ -13,10 +14,12 @@ import { NextResponse } from 'next/server'
 import { searchNameBio } from '@/lib/appraisal/namebio'
 import { getKeywordTrends } from '@/lib/appraisal/google-trends'
 import { getGoDaddyValue } from '@/lib/appraisal/godaddy'
+import { getAtomAppraisal } from '@/lib/appraisal/atom'
 import { scoreBrandability } from '@/lib/appraisal/brandability'
 import type { NameBioResult } from '@/lib/appraisal/namebio'
 import type { TrendsResult } from '@/lib/appraisal/google-trends'
 import type { GoDaddyAppraisal } from '@/lib/appraisal/godaddy'
+import type { AtomAppraisal } from '@/lib/appraisal/atom'
 import type { BrandabilityScore } from '@/lib/appraisal/brandability'
 
 export interface DomainAppraisal {
@@ -26,6 +29,7 @@ export interface DomainAppraisal {
   namebio: NameBioResult
   trends: TrendsResult
   godaddy: GoDaddyAppraisal
+  atom: AtomAppraisal
   brandability: BrandabilityScore
 }
 
@@ -68,10 +72,10 @@ export async function POST(
   const domainName: string = ownedDomain?.domain ?? ''
   if (!domainName) return NextResponse.json({ error: 'Domain not found' }, { status: 400 })
 
-  // Load API key
+  // Load API keys
   const { data: settings } = await supabase
     .from('settings')
-    .select('anthropic_api_key')
+    .select('anthropic_api_key, atom_appraisal_api_key')
     .eq('user_id', user.id)
     .single()
 
@@ -83,15 +87,29 @@ export async function POST(
     )
   }
 
+  const atomAppraisalKey = (settings as any)?.atom_appraisal_api_key as string | null
+
   const analysis = (campaign as any).domain_analysis
   const keyword = (ownedDomain?.word ?? extractKeyword(domainName)).split(' ')[0]
   const geo = getGeoCode(analysis)
 
-  // ── Run 3 free agents in parallel ────────────────────────────────────────
-  const [namebioResult, trendsResult, godaddyResult] = await Promise.allSettled([
+  // ── Run 4 free/independent agents in parallel ─────────────────────────────
+  const [namebioResult, trendsResult, godaddyResult, atomResult] = await Promise.allSettled([
     searchNameBio(keyword, { maxResults: 15, maxAgeDays: 1095, minPrice: 100 }),
     getKeywordTrends(keyword, geo),
     getGoDaddyValue(domainName),
+    atomAppraisalKey
+      ? getAtomAppraisal(domainName, atomAppraisalKey)
+      : Promise.resolve<AtomAppraisal>({
+          domain: domainName,
+          estimated_value: null,
+          min_value: null,
+          max_value: null,
+          grade: null,
+          score: null,
+          confidence: null,
+          available: false,
+        }),
   ])
 
   const namebio: NameBioResult = namebioResult.status === 'fulfilled'
@@ -106,8 +124,17 @@ export async function POST(
     ? godaddyResult.value
     : { domain: domainName, govalue: null, available: false }
 
-  // ── Claude brandability (uses NameBio avg + GoDaddy to calibrate) ─────────
-  const referencePrice = namebio.avg_price ?? godaddy.govalue ?? null
+  const atom: AtomAppraisal = atomResult.status === 'fulfilled'
+    ? atomResult.value
+    : { domain: domainName, estimated_value: null, min_value: null, max_value: null, grade: null, score: null, confidence: null, available: false }
+
+  // ── Claude brandability (uses best available price as reference) ──────────
+  const referencePrice =
+    atom.estimated_value ??
+    namebio.avg_price ??
+    godaddy.govalue ??
+    null
+
   const brandability = await scoreBrandability(domainName, anthropicKey, referencePrice)
 
   const appraisal: DomainAppraisal = {
@@ -117,6 +144,7 @@ export async function POST(
     namebio,
     trends,
     godaddy,
+    atom,
     brandability,
   }
 

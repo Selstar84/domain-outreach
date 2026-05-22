@@ -125,6 +125,28 @@ interface DomainAppraisal {
     govalue: number | null
     available: boolean
   }
+  atom: {
+    domain: string
+    estimated_value: number | null
+    min_value: number | null
+    max_value: number | null
+    grade: string | null
+    score: number | null
+    confidence: string | null
+    available: boolean
+  }
+}
+
+interface AtomDomainAnalytics {
+  domain: string
+  views: number | null
+  clicks: number | null
+  leads: number | null
+  offers: number | null
+  last_viewed: string | null
+  total_sales: number
+  sales: Array<{ domain: string; price: number | null; date: string | null }>
+  fetched_at: string
 }
 
 const DEFAULT_TEMPLATES: TemplateStep[] = [
@@ -190,6 +212,10 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
   const [appraising, setAppraising] = useState(false)
   const [appraisal, setAppraisal] = useState<DomainAppraisal | null>(null)
 
+  // Atom analytics state
+  const [atomAnalytics, setAtomAnalytics] = useState<AtomDomainAnalytics | null>(null)
+  const [fetchingAtomAnalytics, setFetchingAtomAnalytics] = useState(false)
+
   const supabase = createClient()
   const router = useRouter()
 
@@ -209,6 +235,10 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
       .eq('id', id)
       .single()
     setCampaign(data)
+
+    // Restore saved appraisal + analysis from JSONB columns
+    if ((data as any)?.domain_appraisal) setAppraisal((data as any).domain_appraisal)
+    if ((data as any)?.domain_analysis) setAnalysis((data as any).domain_analysis)
 
     const [{ data: prospects }, { data: msgs }] = await Promise.all([
       supabase.from('prospects')
@@ -551,6 +581,24 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
     }
   }
 
+  // ── Atom.com analytics ───────────────────────────────────────────────────
+
+  async function fetchAtomAnalytics(domainName: string) {
+    setFetchingAtomAnalytics(true)
+    try {
+      const res = await fetch(`/api/atom/analytics?domain=${encodeURIComponent(domainName)}`)
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error ?? 'Erreur analytics Atom')
+        return
+      }
+      setAtomAnalytics(data)
+      toast.success('Analytics Atom.com chargés ✓')
+    } finally {
+      setFetchingAtomAnalytics(false)
+    }
+  }
+
   useEffect(() => { load() }, [id])
 
   // Subscribe to discovery job updates via Realtime
@@ -887,6 +935,15 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
                     <span className="text-sm font-bold text-blue-700">${appraisal.godaddy.govalue.toLocaleString()}</span>
                   </div>
                 )}
+                {appraisal.atom?.estimated_value && (
+                  <div className="flex items-center justify-center gap-1.5 mt-1 bg-orange-50 rounded-lg px-2 py-1">
+                    <span className="text-xs text-orange-500 font-medium">⚛️ Atom.com :</span>
+                    <span className="text-sm font-bold text-orange-700">${appraisal.atom.estimated_value.toLocaleString()}</span>
+                    {appraisal.atom.grade && (
+                      <span className="text-xs text-orange-500 font-semibold">({appraisal.atom.grade})</span>
+                    )}
+                  </div>
+                )}
                 {appraisal.namebio.avg_price && (
                   <p className="text-xs text-amber-600">
                     Moy. NameBio : ${appraisal.namebio.avg_price.toLocaleString()}
@@ -1037,6 +1094,99 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
               </p>
             )}
 
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Atom.com Analytics Card */}
+      {campaign && (campaign as any).owned_domain?.domain && (
+        <Card className="border-orange-200 bg-orange-50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2 text-orange-800">
+              ⚛️ Analytics Atom.com
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto border-orange-300 text-orange-700 hover:bg-orange-100 h-7 text-xs"
+                onClick={() => fetchAtomAnalytics((campaign as any).owned_domain.domain)}
+                disabled={fetchingAtomAnalytics}
+              >
+                {fetchingAtomAnalytics ? 'Chargement…' : atomAnalytics ? '🔄 Rafraîchir' : '📊 Charger les analytics'}
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {!atomAnalytics ? (
+              <p className="text-sm text-orange-600 italic">
+                Cliquez sur "Charger les analytics" pour voir les vues, leads et offres depuis Atom.com.
+                Nécessite la clé API Atom dans les Paramètres.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {/* Stats grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="bg-white rounded-xl p-3 border border-orange-100 text-center">
+                    <p className="text-xs text-orange-500 font-medium mb-1">👁 Vues totales</p>
+                    <p className="text-2xl font-bold text-orange-700">{atomAnalytics.views?.toLocaleString() ?? '—'}</p>
+                  </div>
+                  <div className="bg-white rounded-xl p-3 border border-orange-100 text-center">
+                    <p className="text-xs text-orange-500 font-medium mb-1">🖱 Clics</p>
+                    <p className="text-2xl font-bold text-orange-700">{atomAnalytics.clicks?.toLocaleString() ?? '—'}</p>
+                  </div>
+                  <div className="bg-white rounded-xl p-3 border border-orange-100 text-center">
+                    <p className="text-xs text-orange-500 font-medium mb-1">📩 Leads</p>
+                    <p className="text-2xl font-bold text-orange-700">{atomAnalytics.leads?.toLocaleString() ?? '—'}</p>
+                  </div>
+                  <div className="bg-white rounded-xl p-3 border border-orange-100 text-center">
+                    <p className="text-xs text-orange-500 font-medium mb-1">💰 Offres</p>
+                    <p className="text-2xl font-bold text-orange-700">{atomAnalytics.offers?.toLocaleString() ?? '—'}</p>
+                  </div>
+                </div>
+
+                {atomAnalytics.last_viewed && (
+                  <p className="text-xs text-orange-500">
+                    Dernière vue : {new Date(atomAnalytics.last_viewed).toLocaleDateString('fr-FR')}
+                  </p>
+                )}
+
+                {/* Atom sales history */}
+                {atomAnalytics.total_sales > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-orange-700 mb-2">
+                      📦 Ventes récentes sur Atom.com ({atomAnalytics.total_sales} au total)
+                    </p>
+                    <div className="overflow-hidden rounded-lg border border-orange-100">
+                      <table className="w-full text-xs">
+                        <thead className="bg-orange-100">
+                          <tr>
+                            <th className="text-left px-3 py-1.5 text-orange-700 font-medium">Domaine</th>
+                            <th className="text-right px-3 py-1.5 text-orange-700 font-medium">Prix</th>
+                            <th className="text-right px-3 py-1.5 text-orange-700 font-medium hidden sm:table-cell">Date</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-orange-50">
+                          {atomAnalytics.sales.slice(0, 6).map((s, i) => (
+                            <tr key={i} className="bg-white hover:bg-orange-50">
+                              <td className="px-3 py-1.5 font-mono text-orange-700">{s.domain}</td>
+                              <td className="px-3 py-1.5 text-right font-semibold text-green-700">
+                                {s.price ? `$${s.price.toLocaleString()}` : '—'}
+                              </td>
+                              <td className="px-3 py-1.5 text-right text-gray-400 hidden sm:table-cell">
+                                {s.date?.slice(0, 10) ?? '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-xs text-gray-400">
+                  Chargé le {new Date(atomAnalytics.fetched_at).toLocaleString('fr-FR')}
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

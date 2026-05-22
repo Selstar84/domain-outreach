@@ -42,6 +42,10 @@ export default function SettingsPage() {
     instagram_session_cookie: '',
     facebook_session_cookie: '',
 
+    // Atom.com
+    atom_api_key: '',
+    atom_appraisal_api_key: '',
+
     // Limits
     social_daily_limit: '15',
     email_daily_limit_global: '500',
@@ -84,6 +88,9 @@ export default function SettingsPage() {
           apify_api_key: d.apify_api_key ?? '',
           instagram_session_cookie: d.instagram_session_cookie ?? '',
           facebook_session_cookie: d.facebook_session_cookie ?? '',
+
+          atom_api_key: d.atom_api_key ?? '',
+          atom_appraisal_api_key: d.atom_appraisal_api_key ?? '',
 
           social_daily_limit: String(d.social_daily_limit ?? 15),
           email_daily_limit_global: String(d.email_daily_limit_global ?? 500),
@@ -143,6 +150,10 @@ export default function SettingsPage() {
       apify_api_key: form.apify_api_key || null,
       instagram_session_cookie: form.instagram_session_cookie || null,
       facebook_session_cookie: form.facebook_session_cookie || null,
+
+      // Atom.com
+      atom_api_key: form.atom_api_key || null,
+      atom_appraisal_api_key: form.atom_appraisal_api_key || null,
 
       // Limits
       social_daily_limit: parseInt(form.social_daily_limit),
@@ -391,6 +402,44 @@ export default function SettingsPage() {
             />
             <p className="text-xs text-gray-400">
               Exporter depuis votre navigateur après connexion Facebook. Format JSON. Expiration ~90 jours.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Atom.com */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">⚛️ Atom.com Marketplace</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-gray-500">
+            Synchroniser automatiquement vos domaines Atom.com, obtenir des analytics de vues/leads et l'évaluation Atom.
+            La clé Seller est dans <a href="https://www.atom.com/account/api" target="_blank" className="text-blue-500 underline">atom.com/account/api</a>.
+          </p>
+          <div className="space-y-2">
+            <Label>Clé API Seller (Atom.com)</Label>
+            <Input
+              type="password"
+              value={form.atom_api_key}
+              onChange={e => f('atom_api_key', e.target.value)}
+              placeholder="atom_..."
+            />
+            <p className="text-xs text-gray-400">
+              Pour importer vos domaines, synchroniser les prix et accéder aux analytics (vues, leads, offres).
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>Clé API Appraisal (séparée)</Label>
+            <Input
+              type="password"
+              value={form.atom_appraisal_api_key}
+              onChange={e => f('atom_appraisal_api_key', e.target.value)}
+              placeholder="atom_appraisal_..."
+            />
+            <p className="text-xs text-gray-400">
+              Clé distincte pour l'endpoint d'évaluation Atom. Visible dans votre compte sous "Appraisal API".
+              Optionnelle — sans elle, l'évaluation utilise les 4 autres sources (GoDaddy, NameBio, Trends, Claude).
             </p>
           </div>
         </CardContent>

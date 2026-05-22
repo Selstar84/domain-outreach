@@ -20,6 +20,12 @@ export interface OwnedDomain {
   asking_price: number | null
   notes: string | null
   status: DomainStatus
+  // Atom.com sync fields
+  atom_listing_id: string | null
+  atom_views: number | null
+  atom_grade: string | null
+  atom_grade_score: number | null
+  atom_synced_at: string | null
   created_at: string
   updated_at: string
 }
@@ -212,6 +218,10 @@ export interface Settings {
   apify_api_key: string | null
   instagram_session_cookie: string | null
   facebook_session_cookie: string | null
+
+  // ── Atom.com marketplace ────────────────────────────────────────────────────
+  atom_api_key: string | null
+  atom_appraisal_api_key: string | null
 
   social_daily_limit: number
   email_daily_limit_global: number

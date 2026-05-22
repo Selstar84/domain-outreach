@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 import type { OwnedDomain } from '@/types/database'
-import { Plus, Pencil, Trash2, Globe } from 'lucide-react'
+import { Plus, Pencil, Trash2, Globe, RefreshCw, Eye } from 'lucide-react'
 
 function extractWord(domain: string): string {
   return domain.split('.')[0].toLowerCase()
@@ -25,6 +25,7 @@ export default function DomainsPage() {
   const [open, setOpen] = useState(false)
   const [editDomain, setEditDomain] = useState<OwnedDomain | null>(null)
   const [form, setForm] = useState({ domain: '', asking_price: '', notes: '', status: 'active' })
+  const [atomSyncing, setAtomSyncing] = useState(false)
   const supabase = createClient()
   const router = useRouter()
 
@@ -105,6 +106,24 @@ export default function DomainsPage() {
     load()
   }
 
+  async function syncFromAtom() {
+    setAtomSyncing(true)
+    try {
+      const res = await fetch('/api/atom/sync', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error ?? 'Erreur synchronisation Atom')
+      } else {
+        toast.success(`Atom.com synchronisé — ${data.message}`)
+        load()
+      }
+    } catch {
+      toast.error('Erreur de connexion')
+    } finally {
+      setAtomSyncing(false)
+    }
+  }
+
   const statusColors: Record<string, string> = {
     active: 'bg-green-100 text-green-800',
     sold: 'bg-blue-100 text-blue-800',
@@ -118,9 +137,20 @@ export default function DomainsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Mes Domaines</h1>
           <p className="text-gray-500 mt-1">Portfolio de domaines à vendre</p>
         </div>
-        <Button onClick={openNew}>
-          <Plus className="h-4 w-4 mr-2" /> Ajouter un domaine
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            onClick={syncFromAtom}
+            disabled={atomSyncing}
+            className="border-orange-300 text-orange-700 hover:bg-orange-50"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${atomSyncing ? 'animate-spin' : ''}`} />
+            {atomSyncing ? 'Synchronisation…' : '⚛️ Importer depuis Atom.com'}
+          </Button>
+          <Button onClick={openNew}>
+            <Plus className="h-4 w-4 mr-2" /> Ajouter un domaine
+          </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -129,8 +159,13 @@ export default function DomainsPage() {
         <Card>
           <CardContent className="py-16 text-center">
             <Globe className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-500">Aucun domaine. Commencez par en ajouter un.</p>
-            <Button className="mt-4" onClick={openNew}><Plus className="h-4 w-4 mr-2" />Ajouter</Button>
+            <p className="text-gray-500 mb-2">Aucun domaine. Importez depuis Atom.com ou ajoutez manuellement.</p>
+            <div className="flex items-center justify-center gap-3 mt-4">
+              <Button variant="outline" onClick={syncFromAtom} disabled={atomSyncing} className="border-orange-300 text-orange-700 hover:bg-orange-50">
+                <RefreshCw className="h-4 w-4 mr-2" />⚛️ Importer depuis Atom.com
+              </Button>
+              <Button onClick={openNew}><Plus className="h-4 w-4 mr-2" />Ajouter manuellement</Button>
+            </div>
           </CardContent>
         </Card>
       ) : (
@@ -141,6 +176,7 @@ export default function DomainsPage() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Domaine</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Mot-clé</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Prix demandé</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Vues Atom</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Statut</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Notes</th>
                 <th className="px-4 py-3"></th>
@@ -149,9 +185,22 @@ export default function DomainsPage() {
             <tbody className="divide-y">
               {domains.map((d) => (
                 <tr key={d.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900">{d.domain}</td>
+                  <td className="px-4 py-3 font-medium text-gray-900">
+                    {d.domain}
+                    {d.atom_listing_id && (
+                      <span className="ml-2 text-xs text-orange-500 font-normal">⚛️</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-gray-500 font-mono">{d.word}</td>
                   <td className="px-4 py-3 text-gray-700">{d.asking_price ? `$${d.asking_price.toLocaleString()}` : '—'}</td>
+                  <td className="px-4 py-3 text-gray-600">
+                    {d.atom_views != null ? (
+                      <span className="flex items-center gap-1">
+                        <Eye className="h-3 w-3 text-orange-400" />
+                        {d.atom_views.toLocaleString()}
+                      </span>
+                    ) : '—'}
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusColors[d.status]}`}>{d.status}</span>
                   </td>

@@ -30,4 +30,5 @@ ALTER TABLE settings
 -- Domain analysis result (stored on campaign)
 ALTER TABLE campaigns
   ADD COLUMN IF NOT EXISTS domain_analysis JSONB,
-  ADD COLUMN IF NOT EXISTS domain_analyzed_at TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS domain_analyzed_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS domain_appraisal JSONB;

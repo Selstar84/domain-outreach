@@ -30,7 +30,8 @@ import {
 import {
   ArrowLeft, Search, Users, Mail, Rocket, Sparkles, Save,
   Pause, Play, Trash2, CheckCircle, MapPin, Star, BrainCircuit,
-  MessageCircle, Phone, Linkedin, Instagram, Facebook,
+  MessageCircle, Phone, Linkedin, Instagram, Facebook, TrendingUp,
+  TrendingDown, Minus, DollarSign, BarChart2,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import type { Campaign } from '@/types/database'
@@ -82,6 +83,43 @@ interface DomainAnalysis {
   value_proposition: string
   pitch_angle: string
   google_search_query: string
+}
+
+interface DomainAppraisal {
+  domain: string
+  keyword: string
+  appraised_at: string
+  namebio: {
+    sales: Array<{ domain: string; price: number; date: string; venue: string; tld: string }>
+    total_found: number
+    min_price: number | null
+    max_price: number | null
+    median_price: number | null
+    avg_price: number | null
+  }
+  trends: {
+    keyword: string
+    points: Array<{ date: string; value: number }>
+    current_interest: number
+    avg_interest: number
+    direction: 'rising' | 'falling' | 'stable' | 'unknown'
+    direction_pct: number
+  }
+  brandability: {
+    total: number
+    breakdown: {
+      length: number
+      pronounceability: number
+      memorability: number
+      keyword_clarity: number
+      tld_premium: number
+    }
+    strengths: string[]
+    weaknesses: string[]
+    verdict: 'excellent' | 'good' | 'average' | 'weak'
+    estimated_value_range: { min: number; max: number }
+    best_buyer_profile: string
+  }
 }
 
 const DEFAULT_TEMPLATES: TemplateStep[] = [
@@ -142,6 +180,10 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
   // Social outreach launch state
   const [socialLaunching, setSocialLaunching] = useState(false)
   const [socialChannels, setSocialChannels] = useState<Set<string>>(new Set(['whatsapp', 'linkedin']))
+
+  // Domain appraisal state
+  const [appraising, setAppraising] = useState(false)
+  const [appraisal, setAppraisal] = useState<DomainAppraisal | null>(null)
 
   const supabase = createClient()
   const router = useRouter()
@@ -489,6 +531,21 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
     }
   }
 
+  // ── Domain appraisal ─────────────────────────────────────────────────────
+
+  async function appraiseDomain() {
+    setAppraising(true)
+    try {
+      const res = await fetch(`/api/campaigns/${id}/appraise`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) { toast.error(data.error ?? 'Erreur évaluation'); return }
+      setAppraisal(data.appraisal)
+      toast.success('Évaluation complète ✓')
+    } finally {
+      setAppraising(false)
+    }
+  }
+
   useEffect(() => { load() }, [id])
 
   // Subscribe to discovery job updates via Realtime
@@ -653,6 +710,16 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
             <Button
               variant="outline"
               size="sm"
+              onClick={appraiseDomain}
+              disabled={appraising}
+              className="text-amber-700 border-amber-300 hover:bg-amber-50"
+            >
+              <DollarSign className="h-4 w-4 mr-1.5" />
+              {appraising ? 'Évaluation...' : 'Évaluer'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => openApolloDialog()}
               className="text-blue-700 border-blue-300 hover:bg-blue-50"
             >
@@ -763,6 +830,204 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
                 </button>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Domain Appraisal Result */}
+      {appraisal && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2 text-amber-800">
+              <DollarSign className="h-4 w-4" /> Évaluation du domaine
+              <span className="text-xs font-normal text-amber-600 ml-auto">
+                {new Date(appraisal.appraised_at).toLocaleDateString('fr-FR')}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+
+            {/* Brandability + Value */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-white rounded-xl p-4 border border-amber-100 text-center">
+                <p className="text-xs text-amber-600 font-medium mb-1">Score de brandabilité</p>
+                <p className={`text-4xl font-bold ${
+                  appraisal.brandability.total >= 80 ? 'text-green-600' :
+                  appraisal.brandability.total >= 60 ? 'text-blue-600' :
+                  appraisal.brandability.total >= 40 ? 'text-yellow-600' : 'text-red-600'
+                }`}>
+                  {appraisal.brandability.total}
+                  <span className="text-lg font-normal text-gray-400">/100</span>
+                </p>
+                <Badge className={`mt-1 text-xs ${
+                  appraisal.brandability.verdict === 'excellent' ? 'bg-green-100 text-green-700' :
+                  appraisal.brandability.verdict === 'good' ? 'bg-blue-100 text-blue-700' :
+                  appraisal.brandability.verdict === 'average' ? 'bg-yellow-100 text-yellow-700' :
+                  'bg-red-100 text-red-700'
+                }`}>
+                  {appraisal.brandability.verdict === 'excellent' ? '⭐ Excellent' :
+                   appraisal.brandability.verdict === 'good' ? '👍 Bon' :
+                   appraisal.brandability.verdict === 'average' ? '😐 Moyen' : '⚠ Faible'}
+                </Badge>
+              </div>
+              <div className="bg-white rounded-xl p-4 border border-amber-100 text-center">
+                <p className="text-xs text-amber-600 font-medium mb-1">Valeur estimée</p>
+                <p className="text-2xl font-bold text-gray-800">
+                  ${appraisal.brandability.estimated_value_range.min.toLocaleString()}
+                </p>
+                <p className="text-sm text-gray-500">
+                  — ${appraisal.brandability.estimated_value_range.max.toLocaleString()}
+                </p>
+                {appraisal.namebio.avg_price && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    Moy. marché : ${appraisal.namebio.avg_price.toLocaleString()}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Breakdown bars */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-amber-700">Détail du score</p>
+              {Object.entries(appraisal.brandability.breakdown).map(([key, val]) => {
+                const labels: Record<string, string> = {
+                  length: 'Longueur', pronounceability: 'Prononçabilité',
+                  memorability: 'Mémorabilité', keyword_clarity: 'Clarté du mot-clé',
+                  tld_premium: 'Prime TLD',
+                }
+                return (
+                  <div key={key} className="flex items-center gap-2">
+                    <span className="text-xs text-gray-600 w-36 shrink-0">{labels[key]}</span>
+                    <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="h-2 rounded-full bg-amber-400 transition-all"
+                        style={{ width: `${(val / 20) * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-xs font-mono text-gray-500 w-8 text-right">{val}/20</span>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Strengths & Weaknesses */}
+            <div className="grid grid-cols-2 gap-3">
+              {appraisal.brandability.strengths.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-green-700 mb-1">✅ Points forts</p>
+                  <ul className="space-y-0.5">
+                    {appraisal.brandability.strengths.map((s, i) => (
+                      <li key={i} className="text-xs text-gray-600">• {s}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {appraisal.brandability.weaknesses.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-red-700 mb-1">⚠ Points faibles</p>
+                  <ul className="space-y-0.5">
+                    {appraisal.brandability.weaknesses.map((w, i) => (
+                      <li key={i} className="text-xs text-gray-600">• {w}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            <p className="text-xs text-amber-700 italic">
+              🎯 {appraisal.brandability.best_buyer_profile}
+            </p>
+
+            {/* Google Trends */}
+            {appraisal.trends.points.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <BarChart2 className="h-3.5 w-3.5 text-blue-600" />
+                  <p className="text-xs font-medium text-gray-700">
+                    Google Trends — "{appraisal.trends.keyword}" (12 derniers mois)
+                  </p>
+                  <span className={`ml-auto flex items-center gap-1 text-xs font-semibold ${
+                    appraisal.trends.direction === 'rising' ? 'text-green-600' :
+                    appraisal.trends.direction === 'falling' ? 'text-red-600' : 'text-gray-500'
+                  }`}>
+                    {appraisal.trends.direction === 'rising' ? <TrendingUp className="h-3.5 w-3.5" /> :
+                     appraisal.trends.direction === 'falling' ? <TrendingDown className="h-3.5 w-3.5" /> :
+                     <Minus className="h-3.5 w-3.5" />}
+                    {appraisal.trends.direction === 'rising' ? `+${appraisal.trends.direction_pct}% en hausse` :
+                     appraisal.trends.direction === 'falling' ? `${appraisal.trends.direction_pct}% en baisse` :
+                     'Stable'}
+                  </span>
+                </div>
+                {/* Mini bar chart */}
+                <div className="flex items-end gap-0.5 h-12 bg-white rounded-lg border border-blue-100 px-2 py-1">
+                  {appraisal.trends.points.map((pt, i) => {
+                    const maxVal = Math.max(...appraisal.trends.points.map(p => p.value), 1)
+                    const heightPct = (pt.value / maxVal) * 100
+                    const isLast = i === appraisal.trends.points.length - 1
+                    return (
+                      <div
+                        key={pt.date}
+                        title={`${pt.date}: ${pt.value}`}
+                        className={`flex-1 rounded-sm transition-all ${isLast ? 'bg-blue-500' : 'bg-blue-200'}`}
+                        style={{ height: `${Math.max(heightPct, 4)}%` }}
+                      />
+                    )
+                  })}
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  Intérêt actuel : {appraisal.trends.current_interest}/100 · Moyenne : {appraisal.trends.avg_interest}/100
+                </p>
+              </div>
+            )}
+
+            {/* NameBio Comparables */}
+            {appraisal.namebio.sales.length > 0 ? (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <p className="text-xs font-medium text-gray-700">
+                    📊 Ventes comparables NameBio ({appraisal.namebio.total_found} trouvées)
+                  </p>
+                  <div className="ml-auto flex gap-3 text-xs text-gray-500">
+                    <span>Min: <strong>${appraisal.namebio.min_price?.toLocaleString()}</strong></span>
+                    <span>Moy: <strong className="text-amber-700">${appraisal.namebio.avg_price?.toLocaleString()}</strong></span>
+                    <span>Max: <strong>${appraisal.namebio.max_price?.toLocaleString()}</strong></span>
+                  </div>
+                </div>
+                <div className="overflow-hidden rounded-lg border border-gray-100">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-left px-3 py-1.5 text-gray-500 font-medium">Domaine</th>
+                        <th className="text-right px-3 py-1.5 text-gray-500 font-medium">Prix</th>
+                        <th className="text-right px-3 py-1.5 text-gray-500 font-medium hidden sm:table-cell">Date</th>
+                        <th className="text-right px-3 py-1.5 text-gray-500 font-medium hidden sm:table-cell">Plateforme</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {appraisal.namebio.sales.slice(0, 8).map((sale, i) => (
+                        <tr key={i} className="bg-white hover:bg-gray-50">
+                          <td className="px-3 py-1.5 font-mono text-blue-700">{sale.domain}</td>
+                          <td className="px-3 py-1.5 text-right font-semibold text-green-700">
+                            ${sale.price.toLocaleString()}
+                          </td>
+                          <td className="px-3 py-1.5 text-right text-gray-400 hidden sm:table-cell">
+                            {sale.date?.slice(0, 7)}
+                          </td>
+                          <td className="px-3 py-1.5 text-right text-gray-400 hidden sm:table-cell">
+                            {sale.venue}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400 italic">
+                Aucune vente comparable trouvée sur NameBio pour ce mot-clé.
+              </p>
+            )}
+
           </CardContent>
         </Card>
       )}

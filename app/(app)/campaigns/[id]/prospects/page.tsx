@@ -61,7 +61,7 @@ function normalizeHeader(h: string): string {
 function parseCsvLine(line: string, sep: string): string[] {
   const vals: string[] = []
   let i = 0
-  while (i <= line.length) {
+  while (i < line.length) {
     if (line[i] === '"') {
       i++
       let cur = ''
@@ -71,13 +71,13 @@ function parseCsvLine(line: string, sep: string): string[] {
         else { cur += line[i++] }
       }
       while (i < line.length && line[i] !== sep) i++
-      if (line[i] === sep) i++
+      if (i < line.length) i++
       vals.push(cur.trim())
     } else {
       let cur = ''
       while (i < line.length && line[i] !== sep) cur += line[i++]
-      if (line[i] === sep) i++
-      vals.push(cur.trim().replace(/^['"]|['"]$/g, ''))
+      if (i < line.length) i++
+      vals.push(cur.trim())
     }
   }
   return vals
@@ -102,7 +102,18 @@ function parseCSV(text: string): Record<string, string>[] {
   const rawHeaders = parseCsvLine(lines[0], sep).map(h => h.replace(/['"]/g, '').trim())
   const headers = rawHeaders.map(normalizeHeader)
   return lines.slice(1).map(line => {
-    const vals = parseCsvLine(line, sep)
+    let vals = parseCsvLine(line.trim(), sep)
+    // Handle broken "outer-quoted row" format from some lead-export tools.
+    // The entire row is one outer-quoted field, so vals[0] ends up containing
+    // the full (or partial) row — recognisable by having 8+ internal commas,
+    // which is impossible for any real field value (name, domain, email, etc.).
+    const commasInFirst = (vals[0] ?? '').split(',').length - 1
+    if (commasInFirst >= 8) {
+      // vals[0] already has "" decoded to " by parseCsvLine; strip remaining quotes
+      const inner = vals[0].replace(/""/g, '').replace(/"/g, '')
+      const innerVals = parseCsvLine(inner, sep)
+      if (innerVals.length > 1) vals = innerVals
+    }
     const row: Record<string, string> = {}
     headers.forEach((h, i) => {
       if (h && !(h in row)) row[h] = vals[i] ?? '' // first mapping wins

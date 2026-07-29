@@ -15,6 +15,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  // Accept email_account_id from body (overrides campaign preference)
+  const body = await request.json().catch(() => ({}))
+  const bodyAccountId = body?.email_account_id ?? null
+
   // Get campaign + preferred email account
   const { data: campaign } = await supabase
     .from('campaigns')
@@ -24,15 +28,34 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     .single()
 
   if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
+
+  // Resolve which account to use: body > campaign preference > first active account
+  let resolvedAccountId = bodyAccountId ?? campaign.preferred_email_account_id
+  if (!resolvedAccountId) {
+    const { data: firstAccount } = await supabase
+      .from('email_accounts')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .order('created_at')
+      .limit(1)
+      .single()
+    resolvedAccountId = firstAccount?.id ?? null
+  }
+  if (!resolvedAccountId) {
+    return NextResponse.json({ error: 'Aucun compte email actif trouvé. Configure un compte email dans Paramètres.' }, { status: 400 })
+  }
+
+  // Save as preferred if not already set
   if (!campaign.preferred_email_account_id) {
-    return NextResponse.json({ error: 'Aucun compte email configuré pour cette campagne. Va dans les paramètres de la campagne.' }, { status: 400 })
+    await supabase.from('campaigns').update({ preferred_email_account_id: resolvedAccountId }).eq('id', campaign_id)
   }
 
   // Check email account is configured + get limits
   const { data: account } = await supabase
     .from('email_accounts')
     .select('id, is_active, daily_limit')
-    .eq('id', campaign.preferred_email_account_id)
+    .eq('id', resolvedAccountId)
     .eq('user_id', user.id)
     .single()
 
@@ -90,7 +113,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       ai_generated: true,
       status: 'queued',
       scheduled_for: scheduledDateForDay(baseDate, dayOffset),
-      email_account_id: campaign.preferred_email_account_id,
+      email_account_id: resolvedAccountId,
     }
   })
 

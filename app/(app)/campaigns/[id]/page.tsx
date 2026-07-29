@@ -1465,35 +1465,30 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
                   ? `${stats.to_contact} prospect${stats.to_contact > 1 ? 's' : ''} avec email prêts à être contactés. Les emails partiront à 9h et les follow-ups seront planifiés automatiquement.`
                   : 'Aucun prospect à contacter pour le moment.'}
               </p>
-              {!(campaign as any).preferred_email_account_id && (
-                <div className="mt-2">
-                  {emailAccountsList.length === 0
-                    ? <p className="text-xs text-orange-600">⚠ Aucun compte email actif. <a href="/email-accounts" className="underline font-medium">Configurer →</a></p>
-                    : <div className="flex items-center gap-2">
-                        <span className="text-xs text-orange-700 font-medium">⚠ Compte email :</span>
-                        <select
-                          defaultValue=""
-                          onChange={e => e.target.value && savePreferredEmailAccount(e.target.value)}
-                          className="text-xs border border-orange-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
-                        >
-                          <option value="" disabled>Choisir...</option>
-                          {emailAccountsList.map(acc => (
-                            <option key={acc.id} value={acc.id}>
-                              {acc.display_name ? `${acc.display_name} (${acc.email_address})` : acc.email_address}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                  }
-                </div>
-              )}
+              {emailAccountsList.length === 0
+                ? <p className="text-xs text-orange-600 mt-1">⚠ Aucun compte email actif. <a href="/email-accounts" className="underline font-medium">Configurer →</a></p>
+                : <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-green-700">Envoi via :</span>
+                    <select
+                      value={(campaign as any).preferred_email_account_id ?? emailAccountsList[0]?.id ?? ''}
+                      onChange={e => savePreferredEmailAccount(e.target.value)}
+                      className="text-xs border border-green-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                    >
+                      {emailAccountsList.map(acc => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.display_name ? `${acc.display_name} (${acc.email_address})` : acc.email_address}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+              }
               {campaign.status === 'paused' && (
                 <p className="text-xs text-yellow-700 mt-1">⏸ Campagne en pause — les emails planifiés ne seront pas envoyés.</p>
               )}
             </div>
             <Button
               onClick={launchCampaign}
-              disabled={launching || stats.to_contact === 0 || !(campaign as any).preferred_email_account_id || campaign.status === 'paused'}
+              disabled={launching || stats.to_contact === 0 || emailAccountsList.length === 0 || campaign.status === 'paused'}
               className="bg-green-600 hover:bg-green-700 text-white ml-4 shrink-0"
             >
               {launching ? 'Lancement...' : <><Rocket className="h-4 w-4 mr-1.5" />Lancer</>}

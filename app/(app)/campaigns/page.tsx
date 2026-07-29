@@ -15,7 +15,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import Link from 'next/link'
-import { Plus, Megaphone, Globe, Users, ChevronRight, Pause, Play, Trash2 } from 'lucide-react'
+import { Plus, Megaphone, Globe, Users, ChevronRight, Pause, Play, Trash2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Campaign } from '@/types/database'
 
@@ -132,9 +132,14 @@ export default function CampaignsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Campagnes</h1>
           <p className="text-gray-500 mt-1">Une campagne par domaine à vendre</p>
         </div>
-        <Link href="/campaigns/new">
-          <Button><Plus className="h-4 w-4 mr-2" />Nouvelle campagne</Button>
-        </Link>
+        <div className="flex gap-2">
+          <Link href="/bulk-import">
+            <Button variant="outline"><Upload className="h-4 w-4 mr-2" />Import en masse</Button>
+          </Link>
+          <Link href="/campaigns/new">
+            <Button><Plus className="h-4 w-4 mr-2" />Nouvelle campagne</Button>
+          </Link>
+        </div>
       </div>
 
       {loading ? (

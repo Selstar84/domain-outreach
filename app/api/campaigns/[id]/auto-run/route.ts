@@ -45,14 +45,14 @@ export async function POST(
       .single(),
     supabase
       .from('email_accounts')
-      .select('id, is_active, daily_limit')
+      .select('id, is_active, is_verified, daily_limit')
       .eq('id', email_account_id)
       .eq('user_id', user.id)
       .single(),
   ])
 
   if (!campaign) return NextResponse.json({ error: 'Campagne introuvable' }, { status: 404 })
-  if (!account?.is_active) return NextResponse.json({ error: 'Compte email inactif' }, { status: 400 })
+  if (!account?.is_active && !account?.is_verified) return NextResponse.json({ error: 'Compte email inactif' }, { status: 400 })
 
   const apiKey = (settings as any)?.anthropic_api_key as string | null
   if (!apiKey) {

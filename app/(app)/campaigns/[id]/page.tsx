@@ -216,6 +216,13 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
   const [atomAnalytics, setAtomAnalytics] = useState<AtomDomainAnalytics | null>(null)
   const [fetchingAtomAnalytics, setFetchingAtomAnalytics] = useState(false)
 
+  // Auto-run pipeline state
+  const [showAutoRunDialog, setShowAutoRunDialog] = useState(false)
+  const [autoRunning, setAutoRunning] = useState(false)
+  const [autoRunEmailAccountId, setAutoRunEmailAccountId] = useState('')
+  const [emailAccountsList, setEmailAccountsList] = useState<{ id: string; email_address: string; display_name: string | null; provider: string }[]>([])
+  const [autoRunResult, setAutoRunResult] = useState<{ steps: { step: string; status: string }[]; queued: number; total_days: number; first_send: string } | null>(null)
+
   const supabase = createClient()
   const router = useRouter()
 
@@ -350,6 +357,43 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
       load()
     } finally {
       setLaunching(false)
+    }
+  }
+
+  async function fetchEmailAccounts() {
+    const { data } = await supabase
+      .from('email_accounts')
+      .select('id, email_address, display_name, provider')
+      .eq('is_active', true)
+      .order('created_at')
+    setEmailAccountsList(data ?? [])
+    if (data && data.length > 0 && !autoRunEmailAccountId) {
+      setAutoRunEmailAccountId(data[0].id)
+    }
+  }
+
+  async function autoRunCampaign() {
+    if (!autoRunEmailAccountId) return
+    setAutoRunning(true)
+    setAutoRunResult(null)
+    try {
+      const res = await fetch(`/api/campaigns/${id}/auto-run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email_account_id: autoRunEmailAccountId }),
+      })
+      const data = await res.json()
+      if (!res.ok) { toast.error(data.error ?? 'Erreur lors du lancement automatique'); return }
+      setAutoRunResult(data)
+      if (data.queued > 0) {
+        const firstDate = data.first_send ? new Date(data.first_send).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : ''
+        toast.success(`⚡ Pipeline lancé — ${data.queued} emails planifiés à partir du ${firstDate}`)
+      } else {
+        toast.info(data.message ?? 'Pipeline terminé')
+      }
+      load()
+    } finally {
+      setAutoRunning(false)
     }
   }
 
@@ -1291,6 +1335,114 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
           ))}
         </CardContent>
       </Card>
+
+      {/* Auto-Run Pipeline */}
+      <Card className="border-purple-200 bg-purple-50">
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-semibold text-purple-800 flex items-center gap-2">
+                <Sparkles className="h-5 w-5" /> Tout lancer automatiquement
+              </p>
+              <p className="text-sm text-purple-700 mt-1">
+                Pipeline complet en 1 clic : analyse IA → génération emails → envoi automatique avec follow-ups.
+              </p>
+            </div>
+            <Button
+              onClick={() => { setShowAutoRunDialog(true); fetchEmailAccounts() }}
+              className="bg-purple-600 hover:bg-purple-700 text-white ml-4 shrink-0"
+            >
+              <Sparkles className="h-4 w-4 mr-1.5" /> Auto-lancer
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Auto-Run Dialog */}
+      <Dialog open={showAutoRunDialog} onOpenChange={setShowAutoRunDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-purple-600" /> Lancement automatique
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            {!autoRunResult ? (
+              <>
+                <p className="text-sm text-gray-600">
+                  Ce pipeline va automatiquement :
+                </p>
+                <ul className="text-sm text-gray-700 space-y-1 list-none">
+                  <li>✦ Analyser le domaine avec l'IA</li>
+                  <li>✦ Générer 3 templates email personnalisés</li>
+                  <li>✦ Planifier l'envoi pour tous tes prospects</li>
+                  <li>✦ Programmer les follow-ups automatiques (J+3, J+7)</li>
+                </ul>
+                <div>
+                  <label className="text-sm font-medium text-gray-700 block mb-1">Compte email d'envoi</label>
+                  {emailAccountsList.length === 0 ? (
+                    <p className="text-sm text-orange-600">Aucun compte email actif trouvé. <a href="/email-accounts" className="underline">Configurer un compte</a></p>
+                  ) : (
+                    <select
+                      value={autoRunEmailAccountId}
+                      onChange={e => setAutoRunEmailAccountId(e.target.value)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    >
+                      {emailAccountsList.map(acc => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.display_name ? `${acc.display_name} <${acc.email_address}>` : acc.email_address} ({acc.provider})
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <div className="flex gap-2 justify-end pt-2">
+                  <Button variant="outline" onClick={() => setShowAutoRunDialog(false)}>Annuler</Button>
+                  <Button
+                    onClick={autoRunCampaign}
+                    disabled={autoRunning || !autoRunEmailAccountId}
+                    className="bg-purple-600 hover:bg-purple-700 text-white"
+                  >
+                    {autoRunning ? (
+                      <span className="flex items-center gap-2">
+                        <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                        Pipeline en cours...
+                      </span>
+                    ) : (
+                      <><Sparkles className="h-4 w-4 mr-1.5" /> Lancer le pipeline</>
+                    )}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  {autoRunResult.steps.map((s, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm">
+                      <span className={s.status === 'done' ? 'text-green-600' : 'text-gray-400'}>
+                        {s.status === 'done' ? '✓' : '↩'}
+                      </span>
+                      <span className={s.status === 'done' ? 'text-gray-800' : 'text-gray-400'}>{s.step}</span>
+                    </div>
+                  ))}
+                </div>
+                {autoRunResult.queued > 0 ? (
+                  <div className="bg-green-50 border border-green-200 rounded-md p-3 text-sm text-green-800">
+                    <p className="font-semibold">⚡ {autoRunResult.queued} emails planifiés</p>
+                    <p>1er envoi : {new Date(autoRunResult.first_send).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })} à 9h</p>
+                    {autoRunResult.total_days > 1 && <p>Durée : {autoRunResult.total_days} jours</p>}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-600 bg-gray-50 rounded-md p-3">Importe des prospects dans cette campagne pour lancer l'envoi.</p>
+                )}
+                <div className="flex justify-end">
+                  <Button onClick={() => { setShowAutoRunDialog(false); setAutoRunResult(null) }}>Fermer</Button>
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Launch Campaign */}
       <Card className="border-green-200 bg-green-50">

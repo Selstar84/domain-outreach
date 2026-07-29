@@ -372,6 +372,14 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
     }
   }
 
+  async function savePreferredEmailAccount(accountId: string) {
+    await supabase
+      .from('campaigns')
+      .update({ preferred_email_account_id: accountId })
+      .eq('id', id)
+    setCampaign(prev => prev ? { ...prev, preferred_email_account_id: accountId } as any : null)
+  }
+
   async function autoRunCampaign() {
     if (!autoRunEmailAccountId) return
     setAutoRunning(true)
@@ -643,7 +651,7 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
     }
   }
 
-  useEffect(() => { load() }, [id])
+  useEffect(() => { load(); fetchEmailAccounts() }, [id])
 
   // Subscribe to discovery job updates via Realtime
   useEffect(() => {
@@ -1458,7 +1466,26 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
                   : 'Aucun prospect à contacter pour le moment.'}
               </p>
               {!(campaign as any).preferred_email_account_id && (
-                <p className="text-xs text-orange-600 mt-1">⚠ Configure un compte email dans les paramètres de la campagne d'abord.</p>
+                <div className="mt-2">
+                  {emailAccountsList.length === 0
+                    ? <p className="text-xs text-orange-600">⚠ Aucun compte email actif. <a href="/email-accounts" className="underline font-medium">Configurer →</a></p>
+                    : <div className="flex items-center gap-2">
+                        <span className="text-xs text-orange-700 font-medium">⚠ Compte email :</span>
+                        <select
+                          defaultValue=""
+                          onChange={e => e.target.value && savePreferredEmailAccount(e.target.value)}
+                          className="text-xs border border-orange-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                        >
+                          <option value="" disabled>Choisir...</option>
+                          {emailAccountsList.map(acc => (
+                            <option key={acc.id} value={acc.id}>
+                              {acc.display_name ? `${acc.display_name} (${acc.email_address})` : acc.email_address}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                  }
+                </div>
               )}
               {campaign.status === 'paused' && (
                 <p className="text-xs text-yellow-700 mt-1">⏸ Campagne en pause — les emails planifiés ne seront pas envoyés.</p>

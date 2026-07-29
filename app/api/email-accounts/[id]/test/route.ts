@@ -60,8 +60,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'Account not configured' }, { status: 400 })
     }
 
-    // Mark as verified
-    await supabase.from('email_accounts').update({ is_verified: true }).eq('id', id)
+    // Mark as verified and active
+    await supabase.from('email_accounts').update({ is_verified: true, is_active: true }).eq('id', id)
 
     return NextResponse.json({ success: true })
   } catch (err) {

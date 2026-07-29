@@ -36,7 +36,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       .from('email_accounts')
       .select('id')
       .eq('user_id', user.id)
-      .eq('is_active', true)
+      .or('is_active.eq.true,is_verified.eq.true')
       .order('created_at')
       .limit(1)
       .single()
@@ -54,12 +54,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   // Check email account is configured + get limits
   const { data: account } = await supabase
     .from('email_accounts')
-    .select('id, is_active, daily_limit')
+    .select('id, is_active, is_verified, daily_limit')
     .eq('id', resolvedAccountId)
     .eq('user_id', user.id)
     .single()
 
-  if (!account?.is_active) {
+  if (!account?.is_active && !account?.is_verified) {
     return NextResponse.json({ error: 'Le compte email sélectionné est inactif.' }, { status: 400 })
   }
 

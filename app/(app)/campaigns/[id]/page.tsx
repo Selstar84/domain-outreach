@@ -364,7 +364,7 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
     const { data } = await supabase
       .from('email_accounts')
       .select('id, email_address, display_name, provider')
-      .eq('is_active', true)
+      .or('is_active.eq.true,is_verified.eq.true')
       .order('created_at')
     setEmailAccountsList(data ?? [])
     if (data && data.length > 0 && !autoRunEmailAccountId) {

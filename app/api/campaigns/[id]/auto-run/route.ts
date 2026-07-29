@@ -2,6 +2,8 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { getAnthropicClient, MODELS } from '@/lib/ai/claude-client'
 import { searchApolloProspects } from '@/lib/apollo'
+import { searchGooglePlaces } from '@/lib/google-places'
+import { extractEmails } from '@/lib/scraping/email-extractor'
 
 function scheduledDateForDay(baseDate: Date, dayOffset: number): string {
   const d = new Date(baseDate)
@@ -38,7 +40,7 @@ export async function POST(
       .single(),
     supabase
       .from('settings')
-      .select('anthropic_api_key, apollo_api_key')
+      .select('anthropic_api_key, apollo_api_key, google_places_api_key')
       .eq('user_id', user.id)
       .single(),
     supabase
@@ -191,6 +193,88 @@ Rules:
     } catch {
       // Apollo failure is non-blocking — continue pipeline
       steps.push({ step: 'Apollo : recherche ignorée (erreur API)', status: 'skipped' })
+    }
+  }
+
+  // ── Step 1.6: Google Places auto-discovery (if API key configured) ──────────
+  const googleKey = (settings as any)?.google_places_api_key as string | null
+  if (googleKey) {
+    try {
+      const { data: freshCampaign2 } = await supabase
+        .from('campaigns')
+        .select('domain_analysis')
+        .eq('id', campaign_id)
+        .single()
+
+      const googleQuery: string = (freshCampaign2 as any)?.domain_analysis?.google_search_query ?? ''
+
+      if (googleQuery) {
+        const places = await searchGooglePlaces(googleQuery, googleKey, 20)
+        const withWebsite = places.filter(p => p.website)
+
+        // Quick parallel homepage fetch to extract emails (3s timeout per site)
+        async function quickFetchEmail(website: string): Promise<string | null> {
+          try {
+            const controller = new AbortController()
+            setTimeout(() => controller.abort(), 3000)
+            const res = await fetch(website.startsWith('http') ? website : `https://${website}`, {
+              signal: controller.signal,
+              headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DomainBot/1.0)' },
+            })
+            if (!res.ok) return null
+            const html = await res.text()
+            const found = extractEmails(html)
+            return found[0]?.email ?? null
+          } catch {
+            return null
+          }
+        }
+
+        const enriched = await Promise.allSettled(
+          withWebsite.map(async p => {
+            const email = await quickFetchEmail(p.website!)
+            return { place: p, email }
+          })
+        )
+
+        const toInsert = enriched
+          .filter(r => r.status === 'fulfilled' && r.value.email)
+          .map(r => {
+            const { place, email } = (r as PromiseFulfilledResult<{ place: (typeof withWebsite)[0]; email: string }>).value
+            let domain = place.website!
+            try { domain = new URL(place.website!.startsWith('http') ? place.website! : `https://${place.website!}`).hostname.replace(/^www\./, '') }
+            catch { domain = place.website!.replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0] }
+            const dot = domain.indexOf('.')
+            return {
+              campaign_id,
+              user_id: user.id,
+              domain,
+              tld: dot !== -1 ? domain.slice(dot) : '.com',
+              domain_type: 'other' as const,
+              company_name: place.name,
+              phone: place.phone ?? null,
+              email: email!,
+              email_source: 'scraped' as const,
+              website_active: true,
+              scrape_status: 'done' as const,
+              status: 'to_contact' as const,
+            }
+          })
+
+        if (toInsert.length > 0) {
+          const { data: inserted } = await supabase
+            .from('prospects')
+            .upsert(toInsert, { onConflict: 'campaign_id,domain', ignoreDuplicates: true })
+            .select('id')
+          steps.push({ step: `Google Maps : ${inserted?.length ?? 0} prospects trouvés avec email`, status: 'done' })
+        } else {
+          steps.push({ step: `Google Maps : ${places.length} entreprises trouvées, aucun email extrait`, status: 'skipped' })
+        }
+      } else {
+        steps.push({ step: 'Google Maps : requête manquante (analyse incomplète)', status: 'skipped' })
+      }
+    } catch {
+      steps.push({ step: 'Google Maps : recherche ignorée (erreur API)', status: 'skipped' })
     }
   }
 

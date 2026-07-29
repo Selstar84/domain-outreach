@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { getAnthropicClient, MODELS } from '@/lib/ai/claude-client'
+import { searchApolloProspects } from '@/lib/apollo'
 
 function scheduledDateForDay(baseDate: Date, dayOffset: number): string {
   const d = new Date(baseDate)
@@ -37,7 +38,7 @@ export async function POST(
       .single(),
     supabase
       .from('settings')
-      .select('anthropic_api_key')
+      .select('anthropic_api_key, apollo_api_key')
       .eq('user_id', user.id)
       .single(),
     supabase
@@ -112,6 +113,85 @@ Rules:
     steps.push({ step: 'Analyse du domaine', status: 'done' })
   } else {
     steps.push({ step: 'Analyse du domaine', status: 'skipped' })
+  }
+
+  // ── Step 1.5: Apollo auto-discovery (if API key configured) ────────────────
+  const apolloKey = (settings as any)?.apollo_api_key as string | null
+  if (apolloKey) {
+    try {
+      // Reload campaign to get fresh analysis (may have just been saved above)
+      const { data: freshCampaign } = await supabase
+        .from('campaigns')
+        .select('domain_analysis')
+        .eq('id', campaign_id)
+        .single()
+
+      const analysis = (freshCampaign as any)?.domain_analysis
+      const apolloSearches: Array<{ keywords: string[]; location: string; titles: string[] }> =
+        analysis?.apollo_searches ?? []
+
+      if (apolloSearches.length > 0) {
+        const firstSearch = apolloSearches[0]
+        const prospects = await searchApolloProspects(
+          {
+            keywords: firstSearch.keywords,
+            location: firstSearch.location ?? '',
+            titles: firstSearch.titles,
+            maxResults: 25,
+          },
+          apolloKey,
+        )
+
+        // Only import prospects that have an email
+        const withEmail = prospects.filter(p => p.email)
+
+        if (withEmail.length > 0) {
+          function extractDomain(website: string | null, name: string | null, id: string): string {
+            if (website) {
+              try { return new URL(website.startsWith('http') ? website : `https://${website}`).hostname.replace(/^www\./, '') }
+              catch { return website.replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0] }
+            }
+            const slug = (name ?? id).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 63)
+            return `${slug || id.slice(-8)}.no-site`
+          }
+
+          const inserts = withEmail.map(p => {
+            const domain = extractDomain(p.company_website, p.company_name, p.id)
+            const dot = domain.indexOf('.')
+            return {
+              campaign_id,
+              user_id: user.id,
+              domain,
+              tld: dot !== -1 ? domain.slice(dot) : '.no-site',
+              domain_type: 'other' as const,
+              company_name: p.company_name ?? null,
+              owner_name: p.name || null,
+              email: p.email!,
+              email_source: 'hunter' as const,
+              linkedin_url: p.linkedin_url ?? null,
+              phone: p.phone ?? null,
+              website_active: !!p.company_website,
+              scrape_status: 'skipped' as const,
+              status: 'to_contact' as const,
+            }
+          })
+
+          const { data: inserted } = await supabase
+            .from('prospects')
+            .upsert(inserts, { onConflict: 'campaign_id,domain', ignoreDuplicates: true })
+            .select('id')
+
+          steps.push({ step: `Apollo : ${inserted?.length ?? 0} prospects trouvés avec email`, status: 'done' })
+        } else {
+          steps.push({ step: 'Apollo : aucun prospect avec email trouvé', status: 'skipped' })
+        }
+      } else {
+        steps.push({ step: 'Apollo : analyse insuffisante pour la recherche', status: 'skipped' })
+      }
+    } catch {
+      // Apollo failure is non-blocking — continue pipeline
+      steps.push({ step: 'Apollo : recherche ignorée (erreur API)', status: 'skipped' })
+    }
   }
 
   // ── Step 2: Generate + save email templates ─────────────────────────────────

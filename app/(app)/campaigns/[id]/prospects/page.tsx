@@ -44,7 +44,8 @@ function normalizeHeader(h: string): string {
     entreprise: 'company_name', company: 'company_name', societe: 'company_name', organisation: 'company_name', organization: 'company_name',
     prenom: 'first_name', firstname: 'first_name', first_name: 'first_name', given_name: 'first_name',
     nom: 'last_name', lastname: 'last_name', last_name: 'last_name', family_name: 'last_name', surname: 'last_name',
-    mail: 'email', courriel: 'email', e_mail: 'email', adresse_email: 'email',
+    mail: 'email', courriel: 'email', e_mail: 'email', adresse_email: 'email', emails: 'email',
+    title: 'company_name', titre: 'company_name', nom_entreprise: 'company_name',
     tel: 'phone', telephone: 'phone', mobile: 'phone', cellulaire: 'phone',
     linkedin: 'linkedin_url', profil_linkedin: 'linkedin_url', compte_linkedin: 'linkedin_url', lien_linkedin: 'linkedin_url',
     facebook: 'facebook_url', page_facebook: 'facebook_url', compte_facebook: 'facebook_url', fb: 'facebook_url',
@@ -422,7 +423,13 @@ export default function ProspectsPage({ params }: { params: Promise<{ id: string
         company_name: r.company_name?.trim() || null,
         first_name: r.first_name?.trim() || null,
         last_name: r.last_name?.trim() || null,
-        email: r.email?.trim() || null,
+        email: (() => {
+          const raw = r.email?.trim() || ''
+          if (!raw) return null
+          // Handle multiple emails separated by ; or ,
+          const first = raw.split(/[;,]/).map(e => e.trim().replace(/^%20/, '').replace(/^\s+/, '')).find(e => e.includes('@') && !e.startsWith('%'))
+          return first || null
+        })(),
         email_source: r.email?.trim() ? 'manual' : null,
         phone: r.phone?.trim() || null,
         linkedin_url: r.linkedin_url?.trim() || null,

@@ -40,7 +40,7 @@ function normalizeHeader(h: string): string {
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove accents
     .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
   const map: Record<string, string> = {
-    domaine: 'domain', site: 'domain', site_web: 'domain', website: 'domain', url: 'domain',
+    domaine: 'domain', site: 'domain', site_web: 'domain', website: 'domain',
     entreprise: 'company_name', company: 'company_name', societe: 'company_name', organisation: 'company_name', organization: 'company_name',
     prenom: 'first_name', firstname: 'first_name', first_name: 'first_name', given_name: 'first_name',
     nom: 'last_name', lastname: 'last_name', last_name: 'last_name', family_name: 'last_name', surname: 'last_name',
@@ -57,26 +57,58 @@ function normalizeHeader(h: string): string {
   return map[s] ?? s
 }
 
-// ── CSV parser ────────────────────────────────────────────────────────────────
-function parseCSV(text: string): Record<string, string>[] {
-  const lines = text.trim().split(/\r?\n/)
-  if (lines.length < 2) return []
-  const rawHeaders = lines[0].split(',').map(h => h.trim().replace(/['"]/g, ''))
-  const headers = rawHeaders.map(normalizeHeader)
-  return lines.slice(1)
-    .filter(l => l.trim())
-    .map(line => {
-      const vals: string[] = []
+// ── RFC 4180-compliant CSV parser ─────────────────────────────────────────────
+function parseCsvLine(line: string, sep: string): string[] {
+  const vals: string[] = []
+  let i = 0
+  while (i <= line.length) {
+    if (line[i] === '"') {
+      i++
       let cur = ''
-      let inQ = false
-      for (const ch of line) {
-        if (ch === '"') { inQ = !inQ }
-        else if (ch === ',' && !inQ) { vals.push(cur.trim()); cur = '' }
-        else { cur += ch }
+      while (i < line.length) {
+        if (line[i] === '"' && line[i + 1] === '"') { cur += '"'; i += 2 }
+        else if (line[i] === '"') { i++; break }
+        else { cur += line[i++] }
       }
+      while (i < line.length && line[i] !== sep) i++
+      if (line[i] === sep) i++
       vals.push(cur.trim())
-      return Object.fromEntries(headers.map((h, i) => [h, vals[i]?.replace(/^['"]|['"]$/g, '') ?? '']))
+    } else {
+      let cur = ''
+      while (i < line.length && line[i] !== sep) cur += line[i++]
+      if (line[i] === sep) i++
+      vals.push(cur.trim().replace(/^['"]|['"]$/g, ''))
+    }
+  }
+  return vals
+}
+
+function detectSep(line: string): string {
+  let inQ = false
+  const counts: Record<string, number> = { ',': 0, ';': 0, '\t': 0 }
+  for (const ch of line) {
+    if (ch === '"') inQ = !inQ
+    else if (!inQ && ch in counts) counts[ch]++
+  }
+  if (counts[';'] > counts[','] && counts[';'] > counts['\t']) return ';'
+  if (counts['\t'] > counts[',']) return '\t'
+  return ','
+}
+
+function parseCSV(text: string): Record<string, string>[] {
+  const lines = text.trim().split(/\r?\n/).filter(l => l.trim())
+  if (lines.length < 2) return []
+  const sep = detectSep(lines[0])
+  const rawHeaders = parseCsvLine(lines[0], sep).map(h => h.replace(/['"]/g, '').trim())
+  const headers = rawHeaders.map(normalizeHeader)
+  return lines.slice(1).map(line => {
+    const vals = parseCsvLine(line, sep)
+    const row: Record<string, string> = {}
+    headers.forEach((h, i) => {
+      if (h && !(h in row)) row[h] = vals[i] ?? '' // first mapping wins
     })
+    return row
+  })
 }
 
 // ── Excel parser (SheetJS) ────────────────────────────────────────────────────

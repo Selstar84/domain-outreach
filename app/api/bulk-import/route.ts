@@ -56,7 +56,7 @@ export async function POST(request: Request) {
     let campaignStatus: 'created' | 'existing' = 'existing'
 
     const existing = (existingCampaigns ?? []).find(
-      c => (c.owned_domain as { domain: string } | null)?.domain?.toLowerCase().replace(/^www\./, '') === portfolioDomain
+      c => ((c.owned_domain as unknown as { domain: string } | null))?.domain?.toLowerCase().replace(/^www\./, '') === portfolioDomain
     )
 
     if (existing) {

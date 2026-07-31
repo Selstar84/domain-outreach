@@ -100,7 +100,7 @@ export async function POST(request: Request) {
         company_name: row.company_name || null,
         owner_name: row.first_name ? `${row.first_name} ${row.last_name ?? ''}`.trim() : (row.owner_name ?? null),
         email: row.email || null,
-        email_source: 'imported' as const,
+        email_source: 'manual' as const,
         linkedin_url: row.linkedin_url || null,
         phone: row.phone || null,
         website_active: !!rawDomain,

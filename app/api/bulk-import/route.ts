@@ -42,13 +42,22 @@ export async function POST(request: Request) {
   }> = []
 
   for (const [portfolioDomain, leads] of Object.entries(byDomain)) {
-    const owned = (ownedDomains ?? []).find(
+    let owned = (ownedDomains ?? []).find(
       d => d.domain.toLowerCase().replace(/^www\./, '') === portfolioDomain
     )
 
     if (!owned) {
-      results.push({ domain: portfolioDomain, status: 'error', imported: 0, skipped: leads.length, error: 'Domaine absent du portfolio' })
-      continue
+      const word = portfolioDomain.split('.')[0]
+      const { data: newOwned, error: oe } = await supabase
+        .from('owned_domains')
+        .insert({ user_id: user.id, domain: portfolioDomain, word, status: 'active' })
+        .select('id, domain')
+        .single()
+      if (oe || !newOwned) {
+        results.push({ domain: portfolioDomain, status: 'error', imported: 0, skipped: leads.length, error: 'Erreur création domaine portfolio' })
+        continue
+      }
+      owned = newOwned
     }
 
     // Find or create campaign for this domain

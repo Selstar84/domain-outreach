@@ -6,11 +6,15 @@
     },
     {
       "path": "/api/cron/discovery-process",
-      "schedule": "0 10 * * *"
+      "schedule": "0 10 * * 1-5"
     },
     {
       "path": "/api/cron/social-send",
-      "schedule": "0 9 * * *"
+      "schedule": "0 13 * * 1-5"
+    },
+    {
+      "path": "/api/cron/follow-ups",
+      "schedule": "0 13 * * 1-5"
     }
   ]
 }

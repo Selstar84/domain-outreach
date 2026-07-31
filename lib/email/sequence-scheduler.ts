@@ -11,9 +11,13 @@ const DEFAULT_SEQUENCE: { step: number; delayDays: number }[] = [
   { step: 3, delayDays: 10 },
 ]
 
-/**
- * Returns the scheduled dates for follow-up steps after an initial email was sent.
- */
+function skipWeekend(d: Date): Date {
+  const day = d.getUTCDay()
+  if (day === 6) return addDays(d, 2) // Sat → Mon
+  if (day === 0) return addDays(d, 1) // Sun → Mon
+  return d
+}
+
 export function buildFollowUpSchedule(
   initialSentAt: Date,
   customSequence?: { step: number; delayDays: number }[]
@@ -22,6 +26,6 @@ export function buildFollowUpSchedule(
   return sequence.map(({ step, delayDays }) => ({
     step,
     delayDays,
-    scheduledFor: addDays(initialSentAt, delayDays),
+    scheduledFor: skipWeekend(addDays(initialSentAt, delayDays)),
   }))
 }

@@ -1,11 +1,19 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 
-// Returns the UTC date string for day offset at 09:00 UTC
+// Advance to Monday if date lands on Saturday (6) or Sunday (0)
+function nextBusinessDay(d: Date): void {
+  const day = d.getUTCDay()
+  if (day === 6) d.setUTCDate(d.getUTCDate() + 2)
+  else if (day === 0) d.setUTCDate(d.getUTCDate() + 1)
+}
+
+// Returns the UTC date string for day offset at 13:00 UTC (= 9am EDT)
 function scheduledDateForDay(baseDate: Date, dayOffset: number): string {
   const d = new Date(baseDate)
   d.setUTCDate(d.getUTCDate() + dayOffset)
-  d.setUTCHours(9, 0, 0, 0)
+  d.setUTCHours(13, 0, 0, 0)
+  nextBusinessDay(d)
   return d.toISOString()
 }
 
@@ -63,7 +71,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: 'Le compte email sélectionné est inactif.' }, { status: 400 })
   }
 
-  const dailyLimit = account.daily_limit ?? 50
+  const dailyLimit = account.daily_limit ?? 15
 
   // Get all to_contact prospects with an email
   const { data: prospects } = await supabase
@@ -95,11 +103,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   // Smart scheduling: spread across days based on daily_limit
   // If it's before 8:30 AM UTC, start today; otherwise start tomorrow
   const now = new Date()
-  const isBeforeEight30 = now.getUTCHours() < 8 || (now.getUTCHours() === 8 && now.getUTCMinutes() < 30)
+  // Cron fires at 13:00 UTC (9am EDT). If launched before 12:30 UTC, use today; else tomorrow.
+  const isBeforeCronTime = now.getUTCHours() < 12 || (now.getUTCHours() === 12 && now.getUTCMinutes() < 30)
   const baseDate = new Date(now)
-  if (!isBeforeEight30) {
+  if (!isBeforeCronTime) {
     baseDate.setUTCDate(baseDate.getUTCDate() + 1) // start tomorrow
   }
+  nextBusinessDay(baseDate) // skip to Monday if base falls on weekend
 
   const inserts = toQueue.map((p, i) => {
     const dayOffset = Math.floor(i / dailyLimit)

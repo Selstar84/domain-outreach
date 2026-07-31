@@ -7,12 +7,19 @@ import { sendViaSmtp } from '@/lib/email/smtp-client'
 import { buildFollowUpSchedule } from '@/lib/email/sequence-scheduler'
 import { personalizeTemplate } from '@/lib/email/template-personalizer'
 
-// Runs daily at 9am via Vercel Cron
+// Runs Mon-Fri at 13:00 UTC (9am EDT) via Vercel Cron
 // Protected by CRON_SECRET in middleware
 // Handles both step 1 (from Launch) and follow-ups (step 2+)
 export async function GET() {
   const supabase = await createServiceClient()
   const now = new Date()
+
+  // Safety net: skip weekends (Eastern Time = UTC-4 EDT)
+  const easternDay = new Date(now.getTime() - 4 * 60 * 60 * 1000)
+  const dayOfWeek = easternDay.getUTCDay()
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    return NextResponse.json({ processed: 0, skipped: 0, reason: 'weekend' })
+  }
   const nowIso = now.toISOString()
 
   // Midnight UTC today for daily count
@@ -65,7 +72,7 @@ export async function GET() {
       sentToday: sentToday ?? 0,
       sentThisHour: sentThisHour ?? 0,
       lastSentAt: account.last_sent_at ?? null,
-      dailyLimit: account.daily_limit ?? 50,
+      dailyLimit: account.daily_limit ?? 15,
       hourlyLimit: account.hourly_limit ?? 10,
       minDelaySeconds: account.min_delay_seconds ?? 120,
     }

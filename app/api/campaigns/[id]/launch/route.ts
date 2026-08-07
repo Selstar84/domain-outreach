@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { verifyEmail } from '@/lib/email/email-verifier'
 
 // Advance to Monday if date lands on Saturday (6) or Sunday (0)
 function nextBusinessDay(d: Date): void {
@@ -72,6 +73,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   const dailyLimit = account.daily_limit ?? 15
+
+  // Auto-verify unverified emails before launch (parallel — stays under 10s timeout)
+  const [{ data: settings }, { data: toVerify }] = await Promise.all([
+    supabase.from('settings').select('zerobounce_api_key, millionverifier_api_key').eq('user_id', user.id).single(),
+    supabase.from('prospects').select('id, email').eq('campaign_id', campaign_id).eq('status', 'to_contact').not('email', 'is', null).eq('email_status', 'unverified'),
+  ])
+
+  if (toVerify && toVerify.length > 0) {
+    const zbApiKey = (settings as any)?.zerobounce_api_key ?? undefined
+    const mvApiKey = (settings as any)?.millionverifier_api_key ?? undefined
+    const verifications = await Promise.all(
+      toVerify.map(p => verifyEmail(p.email!, { zbApiKey, mvApiKey }).then(status => ({ id: p.id, status })))
+    )
+    await Promise.all(verifications.map(v => supabase.from('prospects').update({ email_status: v.status }).eq('id', v.id)))
+  }
 
   // Get all to_contact prospects with an email that are not marked invalid
   const { data: prospects } = await supabase

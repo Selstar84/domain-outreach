@@ -1467,35 +1467,6 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
         </DialogContent>
       </Dialog>
 
-      {/* Email Verification */}
-      <Card className="border-purple-200 bg-purple-50">
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-semibold text-purple-800 flex items-center gap-2">
-                <ShieldCheck className="h-5 w-5" /> Vérifier les emails
-              </p>
-              <p className="text-sm text-purple-700 mt-1">
-                Filtre les emails invalides avant l'envoi pour protéger ton compte Gmail.
-              </p>
-              {verifyResult && (
-                <p className="text-xs text-purple-700 mt-1">
-                  Dernière vérification : {verifyResult.valid} valides · {verifyResult.invalid} invalides · {verifyResult.risky} risqués · {verifyResult.unknown} inconnus
-                </p>
-              )}
-            </div>
-            <Button
-              onClick={verifyEmails}
-              disabled={verifying || stats.to_contact === 0}
-              variant="outline"
-              className="border-purple-400 text-purple-700 hover:bg-purple-100 ml-4 shrink-0"
-            >
-              {verifying ? 'Vérification...' : <><ShieldCheck className="h-4 w-4 mr-1.5" />Vérifier</>}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Launch Campaign */}
       <Card className="border-green-200 bg-green-50">
         <CardContent className="pt-6">

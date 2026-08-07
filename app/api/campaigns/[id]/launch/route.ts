@@ -73,13 +73,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   const dailyLimit = account.daily_limit ?? 15
 
-  // Get all to_contact prospects with an email
+  // Get all to_contact prospects with an email that are not marked invalid
   const { data: prospects } = await supabase
     .from('prospects')
-    .select('id, email')
+    .select('id, email, email_status')
     .eq('campaign_id', campaign_id)
     .eq('status', 'to_contact')
     .not('email', 'is', null)
+    .neq('email_status', 'invalid')
 
   if (!prospects || prospects.length === 0) {
     return NextResponse.json({ error: 'Aucun prospect à contacter avec un email disponible.' }, { status: 400 })

@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { checkMxRecord } from '@/lib/email/email-verifier'
 
 export async function POST(request: Request) {
   const supabase = await createClient()
@@ -85,12 +86,17 @@ export async function POST(request: Request) {
       campaignStatus = 'created'
     }
 
-    // Build prospect inserts
-    const inserts = leads.map(row => {
+    // Build prospect inserts — MX check emails in parallel (free verification)
+    const mxResults = await Promise.all(
+      leads.map(row => row.email ? checkMxRecord(row.email) : Promise.resolve(false))
+    )
+
+    const inserts = leads.map((row, i) => {
       const rawDomain = (row.domain ?? row.website ?? '').replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0].trim()
       const emailDomain = row.email ? row.email.split('@')[1] ?? '' : ''
       const domain = rawDomain || emailDomain || `lead-${Math.random().toString(36).slice(2, 8)}.no-site`
       const dot = domain.indexOf('.')
+      const emailStatus = row.email ? (mxResults[i] ? 'unknown' : 'invalid') : 'unverified'
       return {
         campaign_id: campaignId,
         user_id: user.id,
@@ -100,6 +106,7 @@ export async function POST(request: Request) {
         company_name: row.company_name || null,
         owner_name: row.first_name ? `${row.first_name} ${row.last_name ?? ''}`.trim() : (row.owner_name ?? null),
         email: row.email || null,
+        email_status: emailStatus,
         email_source: 'manual' as const,
         linkedin_url: row.linkedin_url || null,
         phone: row.phone || null,

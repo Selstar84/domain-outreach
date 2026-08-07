@@ -42,6 +42,10 @@ export default function SettingsPage() {
     instagram_session_cookie: '',
     facebook_session_cookie: '',
 
+    // Email verification
+    zerobounce_api_key: '',
+    millionverifier_api_key: '',
+
     // Atom.com
     atom_api_key: '',
     atom_appraisal_api_key: '',
@@ -88,6 +92,9 @@ export default function SettingsPage() {
           apify_api_key: d.apify_api_key ?? '',
           instagram_session_cookie: d.instagram_session_cookie ?? '',
           facebook_session_cookie: d.facebook_session_cookie ?? '',
+
+          zerobounce_api_key: d.zerobounce_api_key ?? '',
+          millionverifier_api_key: d.millionverifier_api_key ?? '',
 
           atom_api_key: d.atom_api_key ?? '',
           atom_appraisal_api_key: d.atom_appraisal_api_key ?? '',
@@ -151,6 +158,10 @@ export default function SettingsPage() {
       instagram_session_cookie: form.instagram_session_cookie || null,
       facebook_session_cookie: form.facebook_session_cookie || null,
 
+      // Email verification
+      zerobounce_api_key: form.zerobounce_api_key || null,
+      millionverifier_api_key: form.millionverifier_api_key || null,
+
       // Atom.com
       atom_api_key: form.atom_api_key || null,
       atom_appraisal_api_key: form.atom_appraisal_api_key || null,
@@ -212,6 +223,28 @@ export default function SettingsPage() {
               <a href="https://console.cloud.google.com/apis/library/places-backend.googleapis.com" target="_blank" className="text-blue-500 underline">
                 Activer l'API Places (New)
               </a>
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Email Verification */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">✅ Vérification d'emails</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-gray-500">Vérifie les emails avant envoi pour éviter les bounces et protéger ton compte Gmail. Le check MX gratuit est toujours actif. Ajoute une clé API pour une vérification approfondie.</p>
+          <div className="space-y-2">
+            <Label>ZeroBounce API Key <span className="text-gray-400 font-normal">(100 vérif. gratuites/mois)</span></Label>
+            <Input type="password" value={form.zerobounce_api_key} onChange={e => f('zerobounce_api_key', e.target.value)} placeholder="..." />
+            <p className="text-xs text-gray-400">
+              <a href="https://www.zerobounce.net" target="_blank" className="text-blue-500 underline">zerobounce.net</a> — détecte invalid, catch-all, spam traps
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>MillionVerifier API Key <span className="text-gray-400 font-normal">(5000 vérif. ~4$, sans abonnement)</span></Label>
+            <Input type="password" value={form.millionverifier_api_key} onChange={e => f('millionverifier_api_key', e.target.value)} placeholder="..." />
+            <p className="text-xs text-gray-400">
+              <a href="https://www.millionverifier.com" target="_blank" className="text-blue-500 underline">millionverifier.com</a> — alternative économique à ZeroBounce
             </p>
           </div>
         </CardContent>

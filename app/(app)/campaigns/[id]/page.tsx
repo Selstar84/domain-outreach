@@ -31,7 +31,7 @@ import {
   ArrowLeft, Search, Users, Mail, Rocket, Sparkles, Save,
   Pause, Play, Trash2, CheckCircle, MapPin, Star, BrainCircuit,
   MessageCircle, Phone, Linkedin, Instagram, Facebook, TrendingUp,
-  TrendingDown, Minus, DollarSign, BarChart2,
+  TrendingDown, Minus, DollarSign, BarChart2, ShieldCheck,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import type { Campaign } from '@/types/database'
@@ -173,6 +173,8 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
   const [generatingTemplates, setGeneratingTemplates] = useState(false)
   const [savingTemplates, setSavingTemplates] = useState(false)
   const [launching, setLaunching] = useState(false)
+  const [verifying, setVerifying] = useState(false)
+  const [verifyResult, setVerifyResult] = useState<{ verified: number; valid: number; invalid: number; risky: number; unknown: number } | null>(null)
   const [statusLoading, setStatusLoading] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [channelStats, setChannelStats] = useState<Record<string, { total: number; contacted: number; queued: number }>>({})
@@ -342,6 +344,19 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
     } finally {
       setSavingTemplates(false)
     }
+  }
+
+  async function verifyEmails() {
+    setVerifying(true)
+    try {
+      const res = await fetch(`/api/campaigns/${id}/verify-emails`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) { toast.error(data.error || 'Erreur vérification'); return }
+      setVerifyResult(data)
+      if (data.invalid > 0) toast.warning(`${data.invalid} email(s) invalide(s) détecté(s) et marqués`)
+      else toast.success(`${data.verified} email(s) vérifié(s) — ${data.valid} valides`)
+    } catch { toast.error('Erreur vérification') }
+    finally { setVerifying(false) }
   }
 
   async function launchCampaign() {
@@ -1451,6 +1466,35 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Email Verification */}
+      <Card className="border-purple-200 bg-purple-50">
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-semibold text-purple-800 flex items-center gap-2">
+                <ShieldCheck className="h-5 w-5" /> Vérifier les emails
+              </p>
+              <p className="text-sm text-purple-700 mt-1">
+                Filtre les emails invalides avant l'envoi pour protéger ton compte Gmail.
+              </p>
+              {verifyResult && (
+                <p className="text-xs text-purple-700 mt-1">
+                  Dernière vérification : {verifyResult.valid} valides · {verifyResult.invalid} invalides · {verifyResult.risky} risqués · {verifyResult.unknown} inconnus
+                </p>
+              )}
+            </div>
+            <Button
+              onClick={verifyEmails}
+              disabled={verifying || stats.to_contact === 0}
+              variant="outline"
+              className="border-purple-400 text-purple-700 hover:bg-purple-100 ml-4 shrink-0"
+            >
+              {verifying ? 'Vérification...' : <><ShieldCheck className="h-4 w-4 mr-1.5" />Vérifier</>}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Launch Campaign */}
       <Card className="border-green-200 bg-green-50">
